@@ -161,6 +161,15 @@ else
     git -C sing-box-core apply "$PWD/$REALITY_ALPN_PATCH"
 fi
 
+# Match the Reality client version verified against current provider policies.
+REALITY_VERSION_POLICY_PATCH=patches/sing-box-1.14.2-reality-version-policy.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$REALITY_VERSION_POLICY_PATCH" 2>/dev/null; then
+    echo "Reality version policy patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$REALITY_VERSION_POLICY_PATCH"
+    git -C sing-box-core apply "$PWD/$REALITY_VERSION_POLICY_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

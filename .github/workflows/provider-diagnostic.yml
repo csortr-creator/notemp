@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       compare_client_version:
-        description: Also test the reference client's Reality version (diagnostic only)
+        description: Also compare Reality versions 26.3.27 and 26.9.9 (diagnostic only)
         default: false
         type: boolean
 
@@ -69,9 +69,14 @@ jobs:
           path = Path('sing-box-core/common/tls/reality_client.go')
           text = path.read_text()
           old = 'hello.SessionId[1] = 3\n\thello.SessionId[2] = 27'
-          assert text.count(old) == 1
-          path.write_text(text.replace(old, 'hello.SessionId[1] = 9\n\thello.SessionId[2] = 9'))
+          new = 'hello.SessionId[1] = 9\n\thello.SessionId[2] = 9'
+          if text.count(old) == 1:
+              path.write_text(text.replace(old, new))
+              print('SFA_PROVIDER_VARIANT reference-version-26.9.9 (diagnostic only)')
+          else:
+              assert text.count(new) == 1
+              path.write_text(text.replace(new, old))
+              print('SFA_PROVIDER_VARIANT legacy-version-26.3.27 (diagnostic only)')
           PY
-          echo 'SFA_PROVIDER_VARIANT reference-version-26.9.9 (diagnostic only)'
           cd sing-box-core
           go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProviderSmoke$' -v

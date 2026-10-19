@@ -225,6 +225,24 @@ fingerprints or select fallback settings in the product. The runner's network
 can differ from the user's mobile network, and settings reconstructed from a
 screenshot require caution if both implementations fail.
 
+The isolated fixture resolves the endpoint explicitly because the low-level
+sing-box default dialer accepts IPs only and has no application DNS router.
+Both engines use one resolved IPv4 address while retaining TLS SNI and HTTP
+authority. A synthetic domain-dialer test guards this diagnostic prerequisite.
+
+### Reality version policy
+
+The exact-text Finland URI exposed a server version policy: with one pinned
+endpoint, Reality compatibility version 26.3.27 fails authentication, while
+changing only that version to 26.9.9 completes HTTPS with Firefox and Chrome
+to both test origins, matching reference Xray 26.9.9. Earlier runs without
+fixture DNS resolution cannot establish native Reality compatibility.
+
+The version-policy patch uses the verified 26.9.9 value. Local server-floor
+tests cover 26.3.27 and 26.9.9, including negative key/short-ID controls and
+Reality/XHTTP. This does not disable peer authentication or change imported
+credentials, fingerprints, TLS settings, or transport parameters.
+
 
 ### Reality ALPN preservation
 

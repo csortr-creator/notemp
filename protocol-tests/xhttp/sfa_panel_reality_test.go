@@ -22,7 +22,7 @@ import (
 // the peer's version policy (the previous fixtures forced minClientVer=0.0.0).
 func TestSFAPanelRealityXHTTP(t *testing.T) {
 	binary := requireXRayBinary(t)
-	for _, minimum := range []string{"0.0.0", "26.3.27"} {
+	for _, minimum := range []string{"0.0.0", "26.3.27", "26.9.9"} {
 		for _, fingerprint := range []string{"chrome", "firefox"} {
 			for _, mode := range []string{"auto", "stream-up"} {
 				t.Run(minimum+"/"+fingerprint+"/"+mode, func(t *testing.T) {

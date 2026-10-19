@@ -39,6 +39,7 @@ REQUIRED_CORE_PATCHES=(
   sing-box-1.14.2-reality-clock.patch
   sing-box-1.14.2-xhttp-authority.patch
   sing-box-1.14.2-reality-alpn.patch
+  sing-box-1.14.2-reality-version-policy.patch
 )
 
 usage() {

@@ -63,10 +63,12 @@ func TestSFARealityMinimumVersionInterop(t *testing.T) {
 	if binary == "" {
 		t.Skip("modern Xray fixture binary is not configured")
 	}
-	for _, fingerprint := range []string{"chrome", "firefox"} {
-		t.Run(fingerprint, func(t *testing.T) {
-			sfaCheckRealityCombinationPolicy(t, binary, "", fingerprint, "", "26.3.27")
-		})
+	for _, minimum := range []string{"26.3.27", "26.9.9"} {
+		for _, fingerprint := range []string{"chrome", "firefox"} {
+			t.Run(minimum+"/"+fingerprint, func(t *testing.T) {
+				sfaCheckRealityCombinationPolicy(t, binary, "", fingerprint, "", minimum)
+			})
+		}
 	}
 }
 
