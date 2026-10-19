@@ -84,4 +84,55 @@ class SubscriptionRefreshHardeningTest {
         }
     }
 
+    @Test fun srsUrlMigrationNeverChangesPasswordsOrReferencedTags() {
+        val oldUrl = "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ru.srs"
+        val root = JSONObject().put("outbounds", JSONArray().put(
+            JSONObject().put("type", "shadowsocks").put("tag", "geosite-ru").put("password", "geosite-ru")
+                .put("method", "aes-128-gcm").put("server", "example.org").put("server_port", 8388)))
+            .put("route", JSONObject().put("final", "geosite-ru")
+                .put("rule_set", JSONArray().put(JSONObject().put("tag", "geosite-ru").put("type", "remote").put("url", oldUrl))))
+        val parsed = JSONObject(SubscriptionContentParser().parse(root.toString()).config)
+        assertEquals("geosite-ru", parsed.getJSONArray("outbounds").getJSONObject(0).getString("password"))
+        assertEquals("geosite-ru", parsed.getJSONArray("outbounds").getJSONObject(0).getString("tag"))
+        assertEquals("geosite-ru", parsed.getJSONObject("route").getString("final"))
+        assertEquals("geosite-ru", parsed.getJSONObject("route").getJSONArray("rule_set").getJSONObject(0).getString("tag"))
+        assertEquals(oldUrl.replace("geosite-ru.srs", "geosite-category-ru.srs"),
+            parsed.getJSONObject("route").getJSONArray("rule_set").getJSONObject(0).getString("url"))
+    }
+
+    @Test fun legacyDnsMigrationPreservesCustomPortsIpv6AndQuery() {
+        for ((address, type, host, port, path) in listOf(
+            listOf("https://dns.example.org:8443/custom?key=value", "https", "dns.example.org", "8443", "/custom?key=value"),
+            listOf("tls://[2001:db8::53]:8853", "tls", "2001:db8::53", "8853", ""),
+            listOf("tcp://dns.example.org:5353", "tcp", "dns.example.org", "5353", ""),
+            listOf("udp://[2001:db8::53]:5353", "udp", "2001:db8::53", "5353", ""),
+            listOf("1.1.1.1:5353", "udp", "1.1.1.1", "5353", ""),
+        )) {
+            val root = JSONObject().put("outbounds", JSONArray().put(JSONObject().put("type", "direct").put("tag", "direct")))
+                .put("dns", JSONObject().put("servers", JSONArray().put(JSONObject().put("tag", "dns").put("address", address))))
+            val parsed = JSONObject(SubscriptionContentParser().parse(root.toString()).config)
+                .getJSONObject("dns").getJSONArray("servers").getJSONObject(0)
+            assertEquals(address, type, parsed.getString("type"))
+            assertEquals(address, host, parsed.getString("server"))
+            assertEquals(address, port.toInt(), parsed.getInt("server_port"))
+            if (path.isNotEmpty()) assertEquals(path, parsed.getString("path"))
+        }
+    }
+
+    @Test fun fullNativeConfigKeepsFinalAndHasTargetsForAddedSystemRules() {
+        for (final in listOf<String?>(null, "upstream")) {
+            val root = JSONObject().put("outbounds", JSONArray().put(
+                JSONObject().put("type", "direct").put("tag", "upstream")))
+            if (final != null) root.put("route", JSONObject().put("final", final))
+            val config = SubscriptionContentParser().parse(root.toString()).config
+            val parsed = JSONObject(config)
+            if (final == null) assertFalse(parsed.getJSONObject("route").has("final"))
+            else assertEquals(final, parsed.getJSONObject("route").getString("final"))
+            val tags = outbounds(config).keys
+            assertTrue(tags.containsAll(listOf("upstream", "direct", "block")))
+            java.io.File("build/native-configs").mkdirs()
+            java.io.File("build/native-configs/import-native-final-${final ?: "default"}.json").writeText(config)
+        }
+    }
+
 }

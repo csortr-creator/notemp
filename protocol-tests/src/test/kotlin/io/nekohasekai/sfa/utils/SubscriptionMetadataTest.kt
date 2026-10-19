@@ -20,4 +20,10 @@ class SubscriptionMetadataTest {
         assertEquals("Моя подписка", SubscriptionMetadata.nameFromUrl("https://example.org/sub?token=secret#%D0%9C%D0%BE%D1%8F%20%D0%BF%D0%BE%D0%B4%D0%BF%D0%B8%D1%81%D0%BA%D0%B0"))
         assertEquals("sub", SubscriptionMetadata.nameFromUrl("https://example.org/sub?token=secret"))
     }
+    @Test fun acceptsUrlSafeBase64TitleWithoutPadding() {
+        val title = "Подписка 😃"
+        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(title.toByteArray())
+        assertEquals(title, SubscriptionMetadata.title("BASE64: $encoded "))
+    }
+
 }

@@ -2,6 +2,7 @@ package io.nekohasekai.sfa.utils
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -241,15 +242,17 @@ internal class SubscriptionContentParser(
         mode: SubscriptionRouting.Mode,
         migrationWarnings: MutableList<String> = mutableListOf(),
     ): String = try {
-        val fixedRaw =
-            jsonStr
-                .replace(
-                    "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ru.srs",
-                    "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs",
-                )
-                .replace("\"geosite-ru\"", "\"geosite-category-ru\"")
-
-        val root = JSONObject(fixedRaw)
+        val root = JSONObject(jsonStr)
+        val sourceRoute = root.optJSONObject("route")
+        val hadFinal = sourceRoute?.has("final") == true
+        val sourceFinal = sourceRoute?.opt("final")
+        val ruleSets = root.optJSONObject("route")?.optJSONArray("rule_set")
+        if (ruleSets != null) for (i in 0 until ruleSets.length()) {
+            val ruleSet = ruleSets.optJSONObject(i) ?: continue
+            if (ruleSet.optString("url") == "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-ru.srs") {
+                ruleSet.put("url", "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ru.srs")
+            }
+        }
         val dns = root.optJSONObject("dns")
         if (dns != null) {
             dns.remove("independent_cache")
@@ -280,51 +283,10 @@ internal class SubscriptionContentParser(
 
                     if (server.has("address") && !server.has("type")) {
                         val addr = server.remove("address").toString().trim()
-                        try {
-                            when {
-                                addr == "fakeip" || addr.startsWith("fakeip://") -> Unit
-                                addr == "local" || addr.startsWith("rcode://") ->
-                                    server.put("type", "local")
-                                addr.startsWith("https://") -> {
-                                    server.put("type", "https")
-                                    val cleanAddr = addr.removePrefix("https://")
-                                    val host =
-                                        cleanAddr.substringBefore("/").substringBefore(":")
-                                    val path =
-                                        if (cleanAddr.contains("/")) {
-                                            "/" + cleanAddr.substringAfter("/")
-                                        } else {
-                                            "/dns-query"
-                                        }
-                                    server.put("server", host)
-                                    server.put("path", path)
-                                }
-                                addr.startsWith("tls://") -> {
-                                    server.put("type", "tls")
-                                    val cleanAddr = addr.removePrefix("tls://")
-                                    server.put("server", cleanAddr.substringBefore(":"))
-                                }
-                                addr.startsWith("tcp://") -> {
-                                    server.put("type", "tcp")
-                                    val cleanAddr = addr.removePrefix("tcp://")
-                                    server.put("server", cleanAddr.substringBefore(":"))
-                                }
-                                addr.startsWith("udp://") -> {
-                                    server.put("type", "udp")
-                                    val cleanAddr = addr.removePrefix("udp://")
-                                    server.put("server", cleanAddr.substringBefore(":"))
-                                }
-                                else -> {
-                                    server.put("type", "udp")
-                                    server.put("server", addr)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            server.put("type", "udp")
-                            server.put(
-                                "server",
-                                addr.substringAfter("://").substringBefore("/"),
-                            )
+                        when {
+                            addr == "fakeip" || addr.startsWith("fakeip://") -> Unit
+                            addr == "local" || addr.startsWith("rcode://") -> server.put("type", "local")
+                            else -> migrateLegacyDnsAddress(server, addr)
                         }
                     }
                     if (server.has("address_resolver")) {
@@ -382,11 +344,43 @@ internal class SubscriptionContentParser(
 
         root.optJSONObject("dns")?.let { DnsFakeIpMigration.migrate(it, migrationWarnings) }
 
+        val migratedOutbounds = root.optJSONArray("outbounds")
+        if (migratedOutbounds != null) {
+            val tags = (0 until migratedOutbounds.length()).mapNotNull { migratedOutbounds.optJSONObject(it)?.optString("tag") }.toSet()
+            for (type in listOf("direct", "block")) {
+                if (type !in tags) migratedOutbounds.put(JSONObject().put("type", type).put("tag", type))
+            }
+        }
         SubscriptionRouting.apply(root, mode, blockIpv6)
+        // Full native profiles own their final outbound; generated selector tags need not exist.
+        val migratedRoute = root.getJSONObject("route")
+        if (hadFinal) migratedRoute.put("final", sourceFinal) else migratedRoute.remove("final")
 
         root.toString(2)
     } catch (e: LegacyDnsFakeIpIncompatibleException) {
         throw e
+    }
+
+    private fun migrateLegacyDnsAddress(server: JSONObject, address: String) {
+        val value = if ("://" in address) address else {
+            if (address.count { it == ':' } > 1 && !address.startsWith("[")) "udp://[$address]" else "udp://$address"
+        }
+        val uri = try { URI(value) } catch (_: Exception) { error("Invalid legacy DNS address") }
+        val scheme = uri.scheme?.lowercase()
+        require(scheme in setOf("https", "tls", "tcp", "udp") && uri.rawUserInfo == null && uri.rawFragment == null) {
+            "Invalid legacy DNS address"
+        }
+        val host = uri.host?.removeSurrounding("[", "]")?.takeIf { it.isNotBlank() }
+            ?: error("Invalid legacy DNS server")
+        require(uri.port == -1 || uri.port in 1..65535) { "Invalid legacy DNS port" }
+        server.put("type", scheme).put("server", host)
+        if (uri.port != -1) server.put("server_port", uri.port)
+        if (scheme == "https") {
+            val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/dns-query"
+            server.put("path", path + (uri.rawQuery?.let { "?$it" } ?: ""))
+        } else {
+            require((uri.rawPath.isNullOrEmpty() || uri.rawPath == "/") && uri.rawQuery == null) { "Invalid legacy DNS path" }
+        }
     }
 
     private fun tryDecodeBase64(text: String): String {

@@ -329,3 +329,18 @@ parameter changes, cancellation propagation, slow headers/body reads, response l
 redirects, and active-read cancellation. Android scheduling, database/UI integration,
 Stop during switching, and network recovery still require full Android CI and device
 checks. Servers timing out in other clients are not treated as protocol regressions.
+
+Native legacy DNS migration uses URI parsing to retain custom ports, IPv6 literals,
+and the complete HTTPS path/query; invalid legacy addresses fail import rather than
+being partially reconstructed. The old geosite-ru URL migration changes only the
+remote rule-set URL. It keeps tags and every connection field untouched, including
+passwords that happen to equal a rule-set name. Both defects have failing baseline
+regressions. Subscription requests report the actual native core version, and
+profile-title accepts standard and URL-safe Base64, including unpadded values.
+Full native JSON profiles also retain their explicit `route.final`, or the native
+first-outbound default when it was omitted. Import does not replace it with a
+nonexistent generated selector. Direct/block targets are added only when absent,
+so system rules introduced during migration have valid targets; existing tags and
+outbounds remain intact. Generated URI/Clash/Xray profiles keep their generated
+selector behavior. The user's runtime final-outbound override remains a separate
+application setting.

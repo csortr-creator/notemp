@@ -79,7 +79,7 @@ class HTTPClient : Closeable {
         val buildId = Build.ID.ifEmpty { "UKQ1.231003.002" }
 
         val userAgentStr =
-            "sing-box/1.14.0 notemp/${io.nekohasekai.sfa.BuildConfig.VERSION_NAME} (Linux; Android $androidVer; $model Build/$buildId) HWID/$hwid"
+            "sing-box/${Libbox.version().removePrefix("v")} notemp/${io.nekohasekai.sfa.BuildConfig.VERSION_NAME} (Linux; Android $androidVer; $model Build/$buildId) HWID/$hwid"
 
         request.setUserAgent(userAgentStr)
         request.setHeader("HWID", hwid)

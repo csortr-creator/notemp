@@ -10,7 +10,11 @@ internal object SubscriptionMetadata {
         val fromHeader = header?.trim()?.takeIf { it.isNotEmpty() }?.let { value ->
             if (value.startsWith("base64:", true)) {
                 runCatching {
-                    Base64.getDecoder().decode(value.substringAfter(':')).toString(Charsets.UTF_8)
+                    val payload = value.substringAfter(':').filterNot(Char::isWhitespace)
+                    val bytes = runCatching { Base64.getDecoder().decode(payload) }.getOrElse {
+                        Base64.getUrlDecoder().decode(payload)
+                    }
+                    bytes.toString(Charsets.UTF_8)
                 }.getOrNull()
             } else {
                 value
