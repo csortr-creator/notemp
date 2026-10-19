@@ -186,6 +186,7 @@ jobs:
           mkdir -p /tmp/xray-modern
           unzip -q /tmp/xray-modern.zip -d /tmp/xray-modern
           cp protocol-tests/reality/*_test.go sing-box-core/common/tls/
+          cp protocol-tests/xhttp/*_test.go sing-box-core/transport/v2rayxhttp/
           cd sing-box-core
           export XHTTP_XRAY_BINARY=/tmp/xray/xray
           export SFA_REALITY_XRAY_BINARY=/tmp/xray-modern/xray
@@ -193,7 +194,11 @@ jobs:
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
             ./protocol/vless -run '^TestSFA(Salamander|TCPHeader)' -count=3 -v
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
-            ./common/tls -run '^TestSFAReality(XrayInterop|HybridOptionInterop|HybridClientHello)$' -count=3 -v
+            ./common/tls -run '^TestSFAReality(XrayInterop|HybridOptionInterop|HybridClientHello|MinimumVersionInterop)$' -count=3 -v
+          go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
+            ./transport/v2rayxhttp -run '^TestSFAPanelRealityXHTTP$' -count=2 -v
+          XHTTP_XRAY_BINARY=/tmp/xray-modern/xray go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
+            ./transport/v2rayxhttp -run '^TestSFAPanelRealityXHTTP$' -count=2 -v
           # sing-vmess Vision uses unsafe reflection incompatible with race checkptr.
           # Keep auth/plain under -race; run the actual Vision HTTPS exchange separately.
           go test -timeout 5m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \

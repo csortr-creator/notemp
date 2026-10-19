@@ -55,6 +55,22 @@ func sfaCheckRealityXray(t *testing.T, binary, flow string) {
 }
 
 func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encryptionMode string, hybrid ...*bool) {
+	sfaCheckRealityCombinationPolicy(t, binary, flow, fingerprint, encryptionMode, "", hybrid...)
+}
+
+func TestSFARealityMinimumVersionInterop(t *testing.T) {
+	binary := os.Getenv("SFA_REALITY_XRAY_BINARY")
+	if binary == "" {
+		t.Skip("modern Xray fixture binary is not configured")
+	}
+	for _, fingerprint := range []string{"chrome", "firefox"} {
+		t.Run(fingerprint, func(t *testing.T) {
+			sfaCheckRealityCombinationPolicy(t, binary, "", fingerprint, "", "26.3.27")
+		})
+	}
+}
+
+func sfaCheckRealityCombinationPolicy(t *testing.T, binary, flow, fingerprint, encryptionMode, minimum string, hybrid ...*bool) {
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	target.Config.ErrorLog = log.New(io.Discard, "", 0)
 	target.EnableHTTP2 = true
@@ -100,7 +116,7 @@ func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encrypt
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := sfaStartRealityXray(t, binary, target.Listener.Addr().String(), key.Bytes(), decryption)
+	address := sfaStartRealityXray(t, binary, target.Listener.Addr().String(), key.Bytes(), decryption, minimum)
 	cases := []struct {
 		name, shortID, flow string
 		validKey, success   bool
@@ -246,7 +262,7 @@ func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encrypt
 	}
 }
 
-func sfaStartRealityXray(t *testing.T, binary, target string, private []byte, decryption string) string {
+func sfaStartRealityXray(t *testing.T, binary, target string, private []byte, decryption string, minimum ...string) string {
 	t.Helper()
 	var address string
 	var port int
@@ -276,6 +292,9 @@ func sfaStartRealityXray(t *testing.T, binary, target string, private []byte, de
 			}},
 		}},
 		"outbounds": []any{map[string]any{"protocol": "freedom", "settings": map[string]any{"finalRules": []any{map[string]any{"action": "allow", "ip": []string{"127.0.0.0/8"}}}, "ipsBlocked": []string{}}}},
+	}
+	if len(minimum) > 0 && minimum[0] != "" {
+		config["inbounds"].([]any)[0].(map[string]any)["streamSettings"].(map[string]any)["realitySettings"].(map[string]any)["minClientVer"] = minimum[0]
 	}
 	data, err := json.Marshal(config)
 	if err != nil {

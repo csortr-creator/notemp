@@ -30,6 +30,12 @@ REQUIRED_CORE_PATCHES=(
   sing-box-1.14.2-client-options.patch
   sing-box-1.14.2-rule-set-fallback.patch
   sing-box-1.14.2-reality-spider-x.patch
+  sing-box-1.14.2-reality-mlkem.patch
+  sing-box-1.14.2-finalmask-tcp-header.patch
+  sing-box-1.14.2-subscription-compatibility.patch
+  sing-box-1.14.2-reality-hybrid-option.patch
+  sing-box-1.14.2-probe-failure-display.patch
+  sing-box-1.14.2-reality-client-version.patch
 )
 
 usage() {

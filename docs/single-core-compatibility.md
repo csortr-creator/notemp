@@ -131,3 +131,27 @@ Chrome/Firefox/Safari, including cloned configurations, and check both supported
 groups and key shares. Legacy Xray with explicit false and current Xray with
 explicit true must complete HTTPS and reject wrong Reality keys/short IDs.
 The source flag is validated as a boolean and is rejected without Reality.
+
+
+### Reality version policy and panel XHTTP regression
+
+The old client advertised REALITY version 1.8.1. Peers explicitly configured
+with `minClientVer: "26.3.27"` reject it before authenticating the session.
+The compatibility patch reuses the 26.3.27 value from
+[sing-box-lx's pinned Reality implementation](https://github.com/Leadaxe/sing-box-lx/blob/6b1cfa43d931ba5f7e79acaa64841290f25557de/common/tls/reality_client.go).
+This changes the three version bytes; public-key and short-ID validation stay
+intact. Xray versions do not all impose this floor by default.
+
+`protocol-tests/xhttp/sfa_panel_reality_test.go` covers VLESS + Reality +
+Chrome/Firefox + XHTTP auto/stream-up, path `/`, padding 112–1344 bytes, and
+both permissive and explicit 26.3.27 minimum-version policies. Each case
+exchanges 76 KiB through the tunnel against Xray 26.3.27 and 26.9.9.
+The previous XHTTP fixture explicitly set the minimum to zero and tested
+VMess with Chrome; it could not expose this incompatibility.
+`TestSFARealityMinimumVersionInterop` also verifies reconnects and rejects
+wrong keys and short IDs with the new floor enabled.
+
+These local fixtures do not establish the version policy or availability of
+any provider endpoint. In particular, Russia Hysteria2/Salamander failures
+are independent of REALITY and require a reachable endpoint or its runtime
+error to diagnose.
