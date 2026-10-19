@@ -137,14 +137,15 @@ The source flag is validated as a boolean and is rejected without Reality.
 
 The old client advertised REALITY version 1.8.1. Peers explicitly configured
 with `minClientVer: "26.3.27"` reject it before authenticating the session.
-The compatibility patch reuses the 26.3.27 value from
+The initial compatibility patch reused the 26.3.27 value from
 [sing-box-lx's pinned Reality implementation](https://github.com/Leadaxe/sing-box-lx/blob/6b1cfa43d931ba5f7e79acaa64841290f25557de/common/tls/reality_client.go).
-This changes the three version bytes; public-key and short-ID validation stay
-intact. Xray versions do not all impose this floor by default.
+The subsequent version-policy patch advances the verified compatibility value
+to 26.9.9, as described below. Public-key and short-ID validation stay intact.
+Xray versions do not all impose a floor by default.
 
 `protocol-tests/xhttp/sfa_panel_reality_test.go` covers VLESS + Reality +
 Chrome/Firefox + XHTTP auto/stream-up, path `/`, padding 112–1344 bytes, and
-both permissive and explicit 26.3.27 minimum-version policies. Each case
+permissive, explicit 26.3.27, and explicit 26.9.9 minimum-version policies. Each case
 exchanges 76 KiB through the tunnel against Xray 26.3.27 and 26.9.9.
 The previous XHTTP fixture explicitly set the minimum to zero and tested
 VMess with Chrome; it could not expose this incompatibility.
@@ -200,8 +201,9 @@ server. The new fixture tears down server streams before its HTTPS listener.
 Source: [Xray 26.9.9 XHTTP dialer](https://github.com/XTLS/Xray-core/blob/v26.9.9/transport/internet/splithttp/dialer.go),
 `Dial` and separate download URL construction. This defect matches the empty-Host,
 IP-endpoint configuration shown for GeodemaWL Cobalt/Lead, but provider availability
-still needs device verification. Reality-over-TCP authentication failures (Magnetit)
-and Kequinq Reality/XHTTP handshake failures are separate open cases.
+still needs device verification. Magnetit is unreachable over TCP from the CI
+runner; its device behavior remains open. The separate Finland Reality/XHTTP
+failure is resolved by the version-policy fix and verified with the exact URI.
 
 
 ### Optional private provider comparison
