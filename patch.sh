@@ -197,6 +197,15 @@ else
     git -C sing-box-core apply "$PWD/$URLTEST_RESILIENCE_PATCH"
 fi
 
+# Bound subscription fetches while leaving other callers' defaults unchanged.
+SUBSCRIPTION_HTTP_BOUNDS_PATCH=patches/sing-box-1.14.2-subscription-http-bounds.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$SUBSCRIPTION_HTTP_BOUNDS_PATCH" 2>/dev/null; then
+    echo "Subscription HTTP bounds patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$SUBSCRIPTION_HTTP_BOUNDS_PATCH"
+    git -C sing-box-core apply "$PWD/$SUBSCRIPTION_HTTP_BOUNDS_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

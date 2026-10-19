@@ -103,4 +103,13 @@ class ProfileLatencyCacheTest {
     fun invalidStoredJsonDoesNotBlockLoading() {
         assertNull(ProfileLatencyCache("bad json").get(1, "A", "hash"))
     }
+    @Test fun unchangedRefreshDoesNotRequestPersistentCacheWrite() {
+        val cache = ProfileLatencyCache()
+        assertFalse(cache.retain(1, emptyMap()))
+        cache.put(1, "A", "same", 120, 1000)
+        assertFalse(cache.retain(1, mapOf("A" to "same")))
+        assertTrue(cache.retain(1, mapOf("A" to "changed")))
+        assertFalse(cache.retain(1, mapOf("A" to "changed")))
+    }
+
 }

@@ -649,7 +649,7 @@ class DashboardViewModel :
             currentProfiles.forEachIndexed { index, profile ->
                 profile.userOrder = index.toLong()
             }
-            ProfileManager.update(currentProfiles)
+            ProfileManager.updateOrder(currentProfiles)
         }
     }
 

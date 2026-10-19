@@ -43,6 +43,7 @@ REQUIRED_CORE_PATCHES=(
   sing-box-1.14.2-xhttp-http1-lifecycle.patch
   sing-box-1.14.2-xhttp-pending-close.patch
   sing-box-1.14.2-urltest-resilience.patch
+  sing-box-1.14.2-subscription-http-bounds.patch
 )
 
 usage() {

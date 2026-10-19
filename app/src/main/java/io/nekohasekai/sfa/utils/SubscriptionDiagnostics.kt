@@ -51,6 +51,9 @@ internal object SubscriptionDiagnostics {
 
     fun reason(error: Throwable): String {
         val chain = generateSequence(error) { it.cause }.toList()
+        if (chain.filterIsInstance<SubscriptionResponseFailure>().any { it.problem == SubscriptionResponseProblem.TOO_LARGE }) {
+            return "IMPORT_TOO_LARGE: ответ превышает 8 МиБ"
+        }
         val stage = chain.filterIsInstance<SubscriptionStageFailure>().firstOrNull()?.stage
         return when (stage) {
             SubscriptionStage.FETCH ->

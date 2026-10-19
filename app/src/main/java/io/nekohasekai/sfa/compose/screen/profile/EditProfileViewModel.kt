@@ -213,27 +213,28 @@ class EditProfileViewModel(application: Application) : AndroidViewModel(applicat
             _uiState.update { it.copy(isSaving = true) }
 
             try {
-                // Update profile object
-                profile.name = state.name
-                profile.icon = state.icon
-                profile.typed.remoteURL = state.remoteUrl
-
-                // Handle auto-update changes
-                val autoUpdateChanged = state.autoUpdate != state.originalAutoUpdate
-                profile.typed.autoUpdate = state.autoUpdate
-                profile.typed.autoUpdateInterval = state.autoUpdateInterval
-
-                // Save to database
-                ProfileManager.update(profile)
-
-                // Reconfigure updater if auto-update was enabled
-                if (autoUpdateChanged && state.autoUpdate) {
-                    UpdateProfileWork.reconfigureUpdater()
+                val savedProfile = ProfileConfigCommit.withProfileLock(profile.id) {
+                    val current = ProfileManager.get(profile.id) ?: error("PROFILE_UNAVAILABLE")
+                    if (current.typed.remoteURL != state.remoteUrl) {
+                        ProfileConfigCommit.invalidate(profile.id)
+                        current.typed.lastUpdated = Date(0)
+                    }
+                    current.name = state.name
+                    current.icon = state.icon
+                    current.typed.remoteURL = state.remoteUrl
+                    current.typed.autoUpdate = state.autoUpdate
+                    current.typed.autoUpdateInterval = state.autoUpdateInterval
+                    check(ProfileManager.update(current) == 1) { "PROFILE_UNAVAILABLE" }
+                    current
                 }
+                // Disabling updates or changing their interval also changes the worker schedule.
+                UpdateProfileWork.reconfigureUpdater()
 
                 // Update UI state with new original values
                 _uiState.update {
                     it.copy(
+                        profile = savedProfile,
+                        lastUpdated = savedProfile.typed.lastUpdated,
                         originalName = state.name,
                         originalIcon = state.icon,
                         originalRemoteUrl = state.remoteUrl,
@@ -243,6 +244,8 @@ class EditProfileViewModel(application: Application) : AndroidViewModel(applicat
                         isSaving = false,
                     )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (_: Exception) {
                 _uiState.update {
                     it.copy(

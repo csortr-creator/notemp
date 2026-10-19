@@ -17,7 +17,12 @@ private val hwidMemoryCache = ConcurrentHashMap<String, String>()
 
 class HTTPClient : Closeable {
 
-    private val clientDelegate = lazy { Libbox.newHTTPClient().apply { modernTLS() } }
+    private val clientDelegate = lazy {
+        Libbox.newHTTPClient().apply {
+            modernTLS()
+            setTimeout(30)
+        }
+    }
     private val client by clientDelegate
 
     fun getString(url: String): String {
@@ -28,24 +33,25 @@ class HTTPClient : Closeable {
 
     internal fun getSubscription(url: String): SubscriptionImportResult {
         val response = SubscriptionDiagnostics.at(SubscriptionStage.FETCH) { executeFetch(url) }
-        val (rawContent, parsed) = SubscriptionDiagnostics.at(SubscriptionStage.PARSE) {
-            val raw = response.content.unwrap
-            raw to parseSubscription(raw)
+        val parsed = SubscriptionDiagnostics.at(SubscriptionStage.PARSE) {
+            parseSubscription(response.content)
         }
         return SubscriptionDiagnostics.at(SubscriptionStage.METADATA) {
             parsed.copy(
-                profileName = SubscriptionMetadata.title(response.getHeader("profile-title"), rawContent),
-                updateIntervalMinutes = SubscriptionMetadata.intervalMinutes(response.getHeader("profile-update-interval")),
+                profileName = SubscriptionMetadata.title(response.title, response.content),
+                updateIntervalMinutes = SubscriptionMetadata.intervalMinutes(response.interval),
             )
         }
     }
+
+    private data class FetchedSubscription(val content: String, val title: String, val interval: String)
 
     /**
      * Builds a request (HWID + headers unchanged) and executes with retry on
      * transient TLS/timeout/connection failures. Does not log the URL.
      *
-     * Libbox HTTP client timeout API is not configured here (no public timeout setters
-     * used in this codebase); resilience is provided by [SubscriptionFetchRetry].
+     * The whole HTTP exchange is limited to 30 seconds per attempt, including body reads.
+     * Native response reads are bounded before allocation; transient failures use [SubscriptionFetchRetry].
      */
     private fun executeFetch(url: String) = SubscriptionFetchRetry.run(
         onAttempt = { attempt, code, willRetry ->
@@ -56,6 +62,7 @@ class HTTPClient : Closeable {
         },
     ) {
         val request = client.newRequest()
+        request.setResponseLimit(8L * 1024 * 1024)
         request.setURL(url)
 
         val hwid = getOrCreateHwid(url)
@@ -94,44 +101,55 @@ class HTTPClient : Closeable {
         request.setHeader("Platform", "Android")
         request.setHeader("Accept", "*/*")
 
-        request.execute()
+        val response = request.execute()
+        val content = try {
+            response.content.unwrap
+        } catch (e: Exception) {
+            if (e.message.orEmpty().contains("HTTP_RESPONSE_TOO_LARGE")) {
+                throw SubscriptionResponseFailure(SubscriptionResponseProblem.TOO_LARGE)
+            }
+            throw e
+        }
+        FetchedSubscription(content, response.getHeader("profile-title"), response.getHeader("profile-update-interval"))
     }
 
     private fun getOrCreateHwid(url: String): String {
-        val normalizedUrl = url.trim()
-        val urlKey =
-            try {
-                val digest = MessageDigest.getInstance("SHA-256")
-                val hash = digest.digest(normalizedUrl.toByteArray(StandardCharsets.UTF_8))
-                hash.joinToString("") { "%02x".format(it) }
-            } catch (e: Exception) {
-                normalizedUrl.hashCode().toString()
+        synchronized(hwidMemoryCache) {
+            val normalizedUrl = url.trim()
+            val urlKey =
+                try {
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val hash = digest.digest(normalizedUrl.toByteArray(StandardCharsets.UTF_8))
+                    hash.joinToString("") { "%02x".format(it) }
+                } catch (e: Exception) {
+                    normalizedUrl.hashCode().toString()
+                }
+
+            val memoryHwid = hwidMemoryCache[urlKey]
+            if (!memoryHwid.isNullOrBlank()) {
+                return memoryHwid
             }
 
-        val memoryHwid = hwidMemoryCache[urlKey]
-        if (!memoryHwid.isNullOrBlank()) {
-            return memoryHwid
-        }
+            val context = getApplicationContext()
+            if (context != null) {
+                val prefs =
+                    context.getSharedPreferences("subscription_hwid_store", Context.MODE_PRIVATE)
+                val savedHwid = prefs.getString(urlKey, null)
+                if (!savedHwid.isNullOrBlank()) {
+                    hwidMemoryCache[urlKey] = savedHwid
+                    return savedHwid
+                }
 
-        val context = getApplicationContext()
-        if (context != null) {
-            val prefs =
-                context.getSharedPreferences("subscription_hwid_store", Context.MODE_PRIVATE)
-            val savedHwid = prefs.getString(urlKey, null)
-            if (!savedHwid.isNullOrBlank()) {
-                hwidMemoryCache[urlKey] = savedHwid
-                return savedHwid
+                val newHwid = UUID.randomUUID().toString().replace("-", "").take(16)
+                prefs.edit().putString(urlKey, newHwid).apply()
+                hwidMemoryCache[urlKey] = newHwid
+                return newHwid
             }
 
-            val newHwid = UUID.randomUUID().toString().replace("-", "").take(16)
-            prefs.edit().putString(urlKey, newHwid).apply()
-            hwidMemoryCache[urlKey] = newHwid
-            return newHwid
+            val fallbackHwid = urlKey.take(16)
+            hwidMemoryCache[urlKey] = fallbackHwid
+            return fallbackHwid
         }
-
-        val fallbackHwid = urlKey.take(16)
-        hwidMemoryCache[urlKey] = fallbackHwid
-        return fallbackHwid
     }
 
     private fun getApplicationContext(): Context? = try {

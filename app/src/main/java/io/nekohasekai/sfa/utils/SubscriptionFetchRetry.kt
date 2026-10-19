@@ -18,19 +18,22 @@ object SubscriptionFetchRetry {
      * Transient network failures worth retrying. Auth/status/unknown are not retried.
      * TLS (non-timeout handshake/cert) is not retried — usually not transient.
      */
-    fun isRetriable(error: Throwable): Boolean = when (NetworkErrorPresentation.classify(error).kind) {
-        NetworkErrorKind.TLS_TIMEOUT,
-        NetworkErrorKind.TIMEOUT,
-        NetworkErrorKind.CONNECTION,
-        NetworkErrorKind.DNS,
-        -> true
-        NetworkErrorKind.UTLS_UNSUPPORTED,
-        NetworkErrorKind.REALITY_VERIFICATION,
-        NetworkErrorKind.TLS,
-        NetworkErrorKind.HTTP_AUTH,
-        NetworkErrorKind.HTTP_STATUS,
-        NetworkErrorKind.UNKNOWN,
-        -> false
+    fun isRetriable(error: Throwable): Boolean {
+        if (error is java.util.concurrent.CancellationException || error is InterruptedException) return false
+        return when (NetworkErrorPresentation.classify(error).kind) {
+            NetworkErrorKind.TLS_TIMEOUT,
+            NetworkErrorKind.TIMEOUT,
+            NetworkErrorKind.CONNECTION,
+            NetworkErrorKind.DNS,
+            -> true
+            NetworkErrorKind.UTLS_UNSUPPORTED,
+            NetworkErrorKind.REALITY_VERIFICATION,
+            NetworkErrorKind.TLS,
+            NetworkErrorKind.HTTP_AUTH,
+            NetworkErrorKind.HTTP_STATUS,
+            NetworkErrorKind.UNKNOWN,
+            -> false
+        }
     }
 
     /**
@@ -58,7 +61,8 @@ object SubscriptionFetchRetry {
         for (attempt in 1..MAX_ATTEMPTS) {
             try {
                 return block()
-            } catch (t: Throwable) {
+            } catch (t: Exception) {
+                if (t is java.util.concurrent.CancellationException || t is InterruptedException) throw t
                 last = t
                 val code = NetworkErrorPresentation.logCode(t)
                 val retry = attempt < MAX_ATTEMPTS && isRetriable(t)

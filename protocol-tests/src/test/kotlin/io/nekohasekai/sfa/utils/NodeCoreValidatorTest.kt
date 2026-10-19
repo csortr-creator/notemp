@@ -147,4 +147,60 @@ class NodeCoreValidatorTest {
         // 1 family control + 2 nodes = 3 checks (not 2 controls + 2 nodes)
         assertEquals(3, calls)
     }
+    @Test fun repeatedNodesShareValidationOnlyWithinOneBatch() {
+        var calls = 0
+        val engine = NodeCoreValidationEngine { calls++ }
+        val node = NodeCoreHarness.controlVlessRealityDomain()
+        engine.beginBatch()
+        repeat(100) { engine.validateOrThrow(node) }
+        assertEquals(2, calls) // one control and one node
+        engine.endBatch()
+        engine.beginBatch()
+        engine.validateOrThrow(node)
+        assertEquals(4, calls)
+    }
+
+    @Test fun validationCacheDoesNotHideChangedParameters() {
+        var calls = 0
+        val engine = NodeCoreValidationEngine { calls++ }
+        engine.beginBatch()
+        val node = NodeCoreHarness.controlVlessRealityDomain()
+        engine.validateOrThrow(node)
+        node.put("server_port", 8443)
+        engine.validateOrThrow(node)
+        assertEquals(3, calls)
+    }
+
+    @Test fun unavailableResultIsRetriedInsteadOfCached() {
+        var available = false
+        val engine = NodeCoreValidationEngine { if (!available) throw UnsatisfiedLinkError("not loaded") }
+        engine.beginBatch()
+        val node = NodeCoreHarness.controlVlessRealityDomain()
+        assertEquals(NodeCoreVerdict.CORE_UNAVAILABLE, engine.evaluate(node))
+        available = true
+        assertEquals(NodeCoreVerdict.VALID, engine.evaluate(node))
+    }
+
+    @Test fun validationCacheHasBoundedLifetimeAndSize() {
+        var calls = 0
+        val engine = NodeCoreValidationEngine { calls++ }
+        engine.beginBatch()
+        repeat(257) { engine.validateOrThrow(NodeCoreHarness.controlVlessRealityDomain().put("tag", "n-$it")) }
+        assertEquals(258, calls)
+        engine.validateOrThrow(NodeCoreHarness.controlVlessRealityDomain().put("tag", "n-0"))
+        assertEquals(259, calls) // the first entry was evicted
+        engine.endBatch()
+        repeat(2) { engine.validateOrThrow(NodeCoreHarness.controlVlessRealityDomain()) }
+        assertEquals(262, calls) // caching disabled outside a batch
+    }
+
+    @Test fun cancellationOfFamilyControlIsPropagated() {
+        val engine = NodeCoreValidationEngine { throw java.util.concurrent.CancellationException("cancelled") }
+        engine.beginBatch()
+        try {
+            engine.validateOrThrow(NodeCoreHarness.controlVlessRealityDomain())
+            fail("Expected cancellation")
+        } catch (_: java.util.concurrent.CancellationException) { }
+    }
+
 }

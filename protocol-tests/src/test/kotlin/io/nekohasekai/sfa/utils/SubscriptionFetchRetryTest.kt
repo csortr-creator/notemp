@@ -131,4 +131,30 @@ class SubscriptionFetchRetryTest {
         }
         assertEquals(listOf(true, true, false), flags)
     }
+    @Test fun cancellationAndInterruptionNeverRetryOrLogFailure() {
+        for (error in listOf(java.util.concurrent.CancellationException("connection reset by peer"),
+                InterruptedException("read timed out"))) {
+            var calls = 0
+            var logged = false
+            assertFalse(SubscriptionFetchRetry.isRetriable(error))
+            try {
+                SubscriptionFetchRetry.run(sleep = { fail("Must not sleep") },
+                    onAttempt = { _, _, _ -> logged = true }) { calls++; throw error }
+                fail("Expected cancellation or interruption")
+            } catch (caught: Exception) { assertTrue(caught === error) }
+            assertEquals(1, calls)
+            assertFalse(logged)
+        }
+    }
+
+    @Test fun fatalVmErrorsAreNotTreatedAsNetworkFailures() {
+        val fatal = AssertionError("connection reset by peer")
+        var calls = 0
+        try {
+            SubscriptionFetchRetry.run(sleep = { fail("Must not retry VM errors") }) { calls++; throw fatal }
+            fail("Expected fatal error")
+        } catch (caught: AssertionError) { assertTrue(caught === fatal) }
+        assertEquals(1, calls)
+    }
+
 }

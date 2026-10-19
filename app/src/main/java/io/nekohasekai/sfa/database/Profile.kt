@@ -49,6 +49,9 @@ class Profile(
         @Query("DELETE FROM profiles")
         fun clear()
 
+        @Query("UPDATE profiles SET userOrder = :userOrder WHERE id = :profileId")
+        fun updateUserOrder(profileId: Long, userOrder: Long): Int
+
         @Query("SELECT MAX(userOrder) + 1 FROM profiles")
         fun nextOrder(): Long?
 

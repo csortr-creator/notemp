@@ -1,5 +1,7 @@
 package io.nekohasekai.sfa.utils
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -136,6 +138,7 @@ object ProfileConfigCommit {
         expected: ConfigExpectedState,
         content: String,
         validate: (String) -> Unit,
+        sourceStillMatches: suspend () -> Boolean = { true },
         afterFileCommit: suspend () -> T,
     ): CommitOutcome<T> {
         val profileId = expected.profileId
@@ -145,6 +148,8 @@ object ProfileConfigCommit {
             if (expected.operationToken?.let { !isCurrent(profileId, it) } == true) {
                 return CommitOutcome.Stale
             }
+            currentCoroutineContext().ensureActive()
+            if (!sourceStillMatches()) return CommitOutcome.Stale
             val target = File(expected.configPath)
             // Path identity: target must still be the expected path string (caller binds path).
             if (target.path != File(expected.configPath).path) return CommitOutcome.Stale
@@ -158,6 +163,7 @@ object ProfileConfigCommit {
             } catch (e: Exception) {
                 return CommitOutcome.Failed(e)
             }
+            currentCoroutineContext().ensureActive()
             val replaced =
                 try {
                     replaceAtomically(target, content)

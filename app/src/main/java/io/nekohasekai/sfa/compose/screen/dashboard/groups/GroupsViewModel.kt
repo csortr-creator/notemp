@@ -95,7 +95,6 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                     outcome.delayMs,
                     time,
                     outcome.status,
-                    outcome.detail,
                 )
             if (latencyCache.get(profileId, tag, fingerprint) == next) return
             latencyCache.put(
@@ -793,19 +792,18 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
         if (Settings.selectedProfile != profileId) return@withLock
         val sameProfile = uiState.value.profileId == profileId && loadedContent == content
         loadedContent = content
-        val fingerprints =
-            content
-                ?.let {
-                    runCatching { ProfileLatencyCache.fingerprints(it) }
-                        .getOrDefault(emptyMap())
-                }
-                .orEmpty()
+        val fingerprints = if (sameProfile && loadedFingerprints.first == profileId) {
+            loadedFingerprints.second
+        } else {
+            content?.let { runCatching { ProfileLatencyCache.fingerprints(it) }.getOrDefault(emptyMap()) }.orEmpty()
+        }
         val sinceSeconds =
             if (sameProfile) loadedFingerprints.third else System.currentTimeMillis() / 1000
         loadedFingerprints = Triple(profileId, fingerprints, sinceSeconds)
         synchronized(latencyCache) {
-            latencyCache.retain(profileId, fingerprints)
-            Settings.outboundLatencyCache = latencyCache.encode()
+            if (latencyCache.retain(profileId, fingerprints)) {
+                Settings.outboundLatencyCache = latencyCache.encode()
+            }
         }
         updateState {
             val previous =

@@ -4,7 +4,6 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.sfa.database.Profile
 import io.nekohasekai.sfa.database.ProfileManager
 import io.nekohasekai.sfa.database.TypedProfile
-import java.util.Date
 import java.util.concurrent.atomic.AtomicReference
 
 enum class PendingPhase {
@@ -19,6 +18,7 @@ class PendingImportHolder(
     val profileId: Long,
     val profileName: String,
     val configPath: String,
+    val remoteURL: String,
     val content: String,
     val report: SubscriptionImportReport,
     val expected: ConfigExpectedState,
@@ -45,10 +45,11 @@ object ManualSubscriptionUpdate {
         if (ProfileConfigCommit.isMarkedDeleted(profile.id) || ProfileManager.get(profile.id) == null) {
             return ManualPrepareResult.Rejected(ImportOperationOutcome.KEPT_LKG, "PROFILE_UNAVAILABLE: профиль удалён или недоступен")
         }
+        val remoteURL = profile.typed.remoteURL
         val hadPrevious = ImportResultFormatter.configFileExists(profile.typed.path)
         return try {
             val expected = ProfileConfigCommit.beginUpdate(profile.id, profile.typed.path)
-            val result = HTTPClient().use { it.getSubscription(profile.typed.remoteURL) }
+            val result = HTTPClient().use { it.getSubscription(remoteURL) }
             if (!ProfileConfigCommit.isCurrent(profile.id, requireNotNull(expected.operationToken))) {
                 return ManualPrepareResult.Rejected(ImportOperationOutcome.KEPT_LKG, "STALE: начато более новое обновление", result.report)
             }
@@ -65,13 +66,14 @@ object ManualSubscriptionUpdate {
                     ),
                 )
             when (decision) {
-                PolicyDecision.APPLY -> applyNow(profile, result, expected)
+                PolicyDecision.APPLY -> applyNow(profile, result, expected, remoteURL)
                 PolicyDecision.AWAIT_CONFIRMATION -> {
                     ManualPrepareResult.AwaitConfirmation(
                         PendingImportHolder(
                             profileId = profile.id,
                             profileName = profile.name,
                             configPath = profile.typed.path,
+                            remoteURL = remoteURL,
                             content = result.config,
                             report = report,
                             expected = expected,
@@ -93,16 +95,19 @@ object ManualSubscriptionUpdate {
         profile: Profile,
         result: SubscriptionImportResult,
         expected: ConfigExpectedState,
+        remoteURL: String,
     ): ManualPrepareResult = when (
         val outcome =
             ProfileConfigCommit.commitIfUnchanged(
                 expected = expected,
                 content = result.config,
                 validate = ::validateConfig,
+                sourceStillMatches = { ProfileManager.subscriptionSourceMatches(profile.id, expected.configPath, remoteURL) },
                 afterFileCommit = {
-                    result.report.save(profile.typed.path)
-                    profile.typed.lastUpdated = Date()
-                    ProfileManager.update(profile)
+                    result.report.save(expected.configPath)
+                    profile.typed.lastUpdated = ProfileManager.markSubscriptionUpdated(
+                        profile.id, expected.configPath, remoteURL,
+                    )
                 },
             )
     ) {
@@ -144,12 +149,13 @@ object ManualSubscriptionUpdate {
                     expected = pending.expected,
                     content = pending.content,
                     validate = ::validateConfig,
+                    sourceStillMatches = { ProfileManager.subscriptionSourceMatches(pending.profileId, pending.configPath, pending.remoteURL) },
                     afterFileCommit = {
                         pending.report.save(pending.configPath)
-                        if (profile != null) {
-                            profile.typed.lastUpdated = Date()
-                            ProfileManager.update(profile)
-                        }
+                        val updatedAt = ProfileManager.markSubscriptionUpdated(
+                            pending.profileId, pending.configPath, pending.remoteURL,
+                        )
+                        profile?.typed?.lastUpdated = updatedAt
                     },
                 )
         ) {

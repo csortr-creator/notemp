@@ -25,7 +25,6 @@ import io.nekohasekai.sfa.utils.PolicyDecision
 import io.nekohasekai.sfa.utils.ProfileConfigCommit
 import io.nekohasekai.sfa.utils.UpdateTrigger
 import kotlinx.coroutines.CancellationException
-import java.util.Date
 import java.util.concurrent.TimeUnit
 
 class UpdateProfileWork {
@@ -37,6 +36,7 @@ class UpdateProfileWork {
             runCatching {
                 reconfigureUpdater0()
             }.onFailure {
+                if (it is CancellationException) throw it
                 Log.e(TAG, "reconfigureUpdater", it)
             }
         }
@@ -54,7 +54,7 @@ class UpdateProfileWork {
                 remoteProfiles.minByOrNull { it.typed.autoUpdateInterval }!!.typed.autoUpdateInterval.toLong()
             val nowSeconds = System.currentTimeMillis() / 1000L
             val minInitDelay =
-                remoteProfiles.minOf { (it.typed.autoUpdateInterval * 60) - (nowSeconds - (it.typed.lastUpdated.time / 1000L)) }
+                remoteProfiles.minOf { (it.typed.autoUpdateInterval.toLong() * 60L) - (nowSeconds - (it.typed.lastUpdated.time / 1000L)) }
             if (minDelay < 15) minDelay = 15
             WorkManager.getInstance(Application.application).enqueueUniquePeriodicWork(
                 WORK_NAME,
@@ -82,13 +82,14 @@ class UpdateProfileWork {
             for (profile in remoteProfiles) {
                 val lastSeconds =
                     (System.currentTimeMillis() - profile.typed.lastUpdated.time) / 1000L
-                if (lastSeconds < profile.typed.autoUpdateInterval * 60) {
+                if (lastSeconds < profile.typed.autoUpdateInterval.toLong() * 60L) {
                     continue
                 }
                 try {
+                    val remoteURL = profile.typed.remoteURL
                     val expected = ProfileConfigCommit.beginUpdate(profile.id, profile.typed.path)
                     val hadPrevious = ImportResultFormatter.configFileExists(profile.typed.path)
-                    val result = HTTPClient().use { it.getSubscription(profile.typed.remoteURL) }
+                    val result = HTTPClient().use { it.getSubscription(remoteURL) }
                     val content = result.config
                     val report = result.report
                     val decision =
@@ -118,10 +119,10 @@ class UpdateProfileWork {
                                 expected = expected,
                                 content = content,
                                 validate = { Libbox.checkConfig(it) },
+                                sourceStillMatches = { ProfileManager.subscriptionSourceMatches(profile.id, expected.configPath, remoteURL) },
                                 afterFileCommit = {
-                                    result.report.save(profile.typed.path)
-                                    profile.typed.lastUpdated = Date()
-                                    ProfileManager.update(profile)
+                                    result.report.save(expected.configPath)
+                                    ProfileManager.markSubscriptionUpdated(profile.id, expected.configPath, remoteURL)
                                 },
                             )
                     ) {
@@ -145,6 +146,7 @@ class UpdateProfileWork {
                             Log.w(TAG, "event=profile_update_stale profileId=${profile.id}")
                         }
                         is CommitOutcome.Failed -> {
+                            if (outcome.error is CancellationException) throw outcome.error
                             Log.e(
                                 TAG,
                                 "event=profile_update_commit_failed profileId=${profile.id} code=COMMIT",
@@ -163,8 +165,9 @@ class UpdateProfileWork {
                 }
             }
             if (selectedProfileUpdated) {
-                runCatching {
-                    Libbox.newStandaloneCommandClient().serviceReload()
+                // Selection may have changed while the subscriptions were downloading.
+                if (Settings.selectedProfile == selectedProfile) {
+                    runCatching { Libbox.newStandaloneCommandClient().serviceReload() }
                 }
             }
             return if (success) {

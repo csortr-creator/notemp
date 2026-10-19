@@ -1,6 +1,7 @@
 package io.nekohasekai.sfa.database
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import io.nekohasekai.sfa.Application
 import io.nekohasekai.sfa.constant.Path
 import kotlinx.coroutines.CoroutineScope
@@ -10,10 +11,12 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import java.util.Date
+import java.util.concurrent.CopyOnWriteArrayList
 
 @Suppress("RedundantSuspendModifier")
 object ProfileManager {
-    private val callbacks = mutableListOf<() -> Unit>()
+    private val callbacks = CopyOnWriteArrayList<() -> Unit>()
 
     fun registerCallback(callback: () -> Unit) {
         callbacks.add(callback)
@@ -26,7 +29,7 @@ object ProfileManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private fun notifyCallbacks() {
-        callbacks.toList().forEach { callback ->
+        callbacks.forEach { callback ->
             scope.launch {
                 callback()
             }
@@ -64,6 +67,27 @@ object ProfileManager {
         return profile
     }
 
+    /** Update only fetch metadata from the latest row; never restore a pre-fetch profile snapshot. */
+    suspend fun markSubscriptionUpdated(id: Long, path: String, remoteURL: String): Date {
+        val updatedAt = instance.withTransaction {
+            val current = instance.profileDao().get(id) ?: error("PROFILE_UNAVAILABLE")
+            check(current.typed.type == TypedProfile.Type.Remote &&
+                current.typed.path == path && current.typed.remoteURL == remoteURL) { "PROFILE_SOURCE_CHANGED" }
+            val now = Date()
+            current.typed.lastUpdated = now
+            check(instance.profileDao().update(current) == 1) { "PROFILE_UNAVAILABLE" }
+            now
+        }
+        notifyCallbacks()
+        return updatedAt
+    }
+
+    suspend fun subscriptionSourceMatches(id: Long, path: String, remoteURL: String): Boolean {
+        val current = get(id) ?: return false
+        return current.typed.type == TypedProfile.Type.Remote &&
+            current.typed.path == path && current.typed.remoteURL == remoteURL
+    }
+
     suspend fun update(profile: Profile): Int {
         try {
             return instance.profileDao().update(profile)
@@ -72,9 +96,11 @@ object ProfileManager {
         }
     }
 
-    suspend fun update(profiles: List<Profile>): Int {
+    suspend fun updateOrder(profiles: List<Profile>): Int {
         try {
-            return instance.profileDao().update(profiles)
+            return instance.withTransaction {
+                profiles.sumOf { instance.profileDao().updateUserOrder(it.id, it.userOrder) }
+            }
         } finally {
             notifyCallbacks()
         }

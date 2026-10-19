@@ -1,6 +1,7 @@
 package io.nekohasekai.sfa.utils
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -112,4 +113,35 @@ class SubscriptionUpdateOrderingTest {
         assertEquals(CommitOutcome.Stale, outcome)
         assertEquals("LKG", target.readText())
     }
+    @Test
+    fun changedSubscriptionSourceRejectsEvenWhenFileIsUnchanged() = runBlocking {
+        val target = tmp.newFile("changed-source.json").apply { writeText("LKG") }
+        val expected = ProfileConfigCommit.beginUpdate(62001L, target.path)
+        var validated = false
+        var metadataWritten = false
+        val result = ProfileConfigCommit.commitIfUnchanged(
+            expected, "OLD-SOURCE", validate = { validated = true },
+            sourceStillMatches = { false }, afterFileCommit = { metadataWritten = true },
+        )
+        assertEquals(CommitOutcome.Stale, result)
+        assertEquals("LKG", target.readText())
+        assertTrue(!validated && !metadataWritten)
+    }
+
+    @Test
+    fun cancelledUpdateCannotReplaceFileAfterValidation() = runBlocking {
+        val target = tmp.newFile("cancelled.json").apply { writeText("LKG") }
+        val expected = ProfileConfigCommit.beginUpdate(62002L, target.path)
+        var metadataWritten = false
+        val job = launch {
+            ProfileConfigCommit.commitIfUnchanged(
+                expected, "CANCELLED", validate = { coroutineContext[kotlinx.coroutines.Job]!!.cancel() },
+                afterFileCommit = { metadataWritten = true },
+            )
+        }
+        job.join()
+        assertEquals("LKG", target.readText())
+        assertTrue(!metadataWritten)
+    }
+
 }

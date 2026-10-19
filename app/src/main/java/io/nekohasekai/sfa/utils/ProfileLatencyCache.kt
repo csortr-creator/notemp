@@ -59,13 +59,16 @@ class ProfileLatencyCache(raw: String = "{}") {
     }
 
     @Synchronized
-    fun retain(profile: Long, fingerprints: Map<String, String>) {
-        val values = entries.optJSONObject(profile.toString()) ?: return
+    fun retain(profile: Long, fingerprints: Map<String, String>): Boolean {
+        val values = entries.optJSONObject(profile.toString()) ?: return false
+        var changed = false
         values.keys().asSequence().toList().forEach { tag ->
             if (values.optJSONObject(tag)?.optString("fingerprint") != fingerprints[tag]) {
                 values.remove(tag)
+                changed = true
             }
         }
+        return changed
     }
 
     /** Serialize without legacy detail keys. */

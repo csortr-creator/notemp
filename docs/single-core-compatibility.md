@@ -289,3 +289,43 @@ and h2/HTTP1.1, including Clone; all four cases fail before and pass afterward.
 Reality/XHTTP exchanges and wrong-key/short-ID controls verify that authentication
 is retained. This corrects configured transport behavior; it is not proof that a
 specific provider's authentication failure was caused by ALPN.
+
+### Subscription refresh consistency and bounded fetches
+
+A refresh binds its result to both the pre-fetch configuration generation and the
+subscription URL/path. Editing the source invalidates pending fetches and partial
+import confirmations. Refresh metadata is applied to the latest database row in a
+Room transaction; it does not restore a pre-fetch name, icon, update interval, or
+update toggle. Reordering subscriptions updates only `userOrder`. Profile editing
+shares the configuration commit mutex and reloads the latest row before saving.
+Disabling updates and changing their interval both reconfigure WorkManager.
+
+Subscription HTTP requests have a 30-second deadline per attempt covering headers
+and body reads. The native response reader enforces an optional 8 MiB limit before
+an oversized body can be fully allocated, including chunked/decompressed responses.
+The existing bounded retry policy now covers transient body-read failures as well
+as connection failures. A size failure is not retried, and reports use the stable
+`IMPORT_TOO_LARGE` diagnostic. Native HTTP client Close cancels active requests and
+is idempotent. Other native HTTP callers keep unlimited/default behavior unless
+these options are explicitly configured; streaming file downloads are unchanged.
+
+Import bounds are checked before per-node native validation: 10,000 records and
+8 MiB UTF-8 input. Native JSON outbound arrays preserve explicit tags exactly,
+including percent signs and built-in names, so selector/default/detour references
+remain valid. Ambiguous duplicate tags reject the array instead of silently
+rewiring it. A BOM inside a Base64 subscription is normalized after decoding.
+
+Within one import, a bounded cache of 256 definitive node validation results avoids
+repeating native checks for identical entries. It clears at batch boundaries and
+never caches unknown/unavailable results. A 100-entry identical-input test reduces
+native calls from 101 to 2 (one family control and one node), without deduplicating
+or dropping imported entries. This is a call-count result, not a device speed claim.
+Unchanged profile reloads reuse fingerprints and avoid rewriting unchanged latency
+cache data. Concurrent creation of a subscription HWID is serialized.
+
+Regression coverage includes byte and entry limits, decoded BOMs, native reference
+tags, changed-source rejection, cancelled pre-commit updates, bounded cache eviction,
+parameter changes, cancellation propagation, slow headers/body reads, response limits,
+redirects, and active-read cancellation. Android scheduling, database/UI integration,
+Stop during switching, and network recovery still require full Android CI and device
+checks. Servers timing out in other clients are not treated as protocol regressions.

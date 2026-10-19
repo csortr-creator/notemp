@@ -1,0 +1,132 @@
+--- a/experimental/libbox/http.go
++++ b/experimental/libbox/http.go
+@@ -17,6 +17,7 @@
+ 	"os"
+ 	"strconv"
+ 	"sync"
++	"time"
+ 
+ 	"github.com/sagernet/sing-box/common/certificate"
+ 	C "github.com/sagernet/sing-box/constant"
+@@ -31,6 +32,7 @@
+ )
+ 
+ type HTTPClient interface {
++	SetTimeout(seconds int32)
+ 	RestrictedTLS()
+ 	ModernTLS()
+ 	PinnedTLS12()
+@@ -49,6 +51,7 @@
+ 	SetContentString(content string)
+ 	RandomUserAgent()
+ 	SetUserAgent(userAgent string)
++	SetResponseLimit(bytes int64)
+ 	Execute() (HTTPResponse, error)
+ }
+ 
+@@ -74,10 +77,14 @@
+ 	client    http.Client
+ 	transport http.Transport
+ 	store     *certificate.Store
++	ctx       context.Context
++	cancel    context.CancelFunc
++	closeOnce sync.Once
+ }
+ 
+ func NewHTTPClient() HTTPClient {
+ 	client := new(httpClient)
++	client.ctx, client.cancel = context.WithCancel(context.Background())
+ 	client.client.Transport = &client.transport
+ 	client.transport.ForceAttemptHTTP2 = true
+ 	client.transport.TLSHandshakeTimeout = C.TCPTimeout
+@@ -93,6 +100,11 @@
+ 	return client
+ }
+ 
++// SetTimeout bounds the complete exchange, including response body reads.
++func (c *httpClient) SetTimeout(seconds int32) {
++	c.client.Timeout = time.Duration(max(seconds, 0)) * time.Second
++}
++
+ func (c *httpClient) ModernTLS() {
+ 	c.setTLSVersion(tls.VersionTLS12, 0, func(suite *tls.CipherSuite) bool { return true })
+ }
+@@ -158,19 +170,24 @@
+ 		Method: "GET",
+ 		Header: http.Header{},
+ 	}
++	req.request = *req.request.WithContext(c.ctx)
+ 	return req
+ }
+ 
+ func (c *httpClient) Close() {
+-	if c.store != nil {
+-		c.store.Close()
+-	}
+-	c.transport.CloseIdleConnections()
++	c.closeOnce.Do(func() {
++		c.cancel()
++		if c.store != nil {
++			c.store.Close()
++		}
++		c.transport.CloseIdleConnections()
++	})
+ }
+ 
+ type httpRequest struct {
+ 	*httpClient
+-	request http.Request
++	request       http.Request
++	responseLimit int64
+ }
+ 
+ func (r *httpRequest) SetURL(link string) (err error) {
+@@ -211,12 +228,18 @@
+ 	r.SetContent([]byte(content))
+ }
+ 
++// SetResponseLimit applies to GetContent only; streaming downloads keep their existing behavior.
++// Zero leaves the response unlimited. Bound the optional limit to avoid overflow in limit+1.
++func (r *httpRequest) SetResponseLimit(bytes int64) {
++	r.responseLimit = max(0, min(bytes, 1<<30))
++}
++
+ func (r *httpRequest) Execute() (HTTPResponse, error) {
+ 	response, err := r.client.Do(&r.request)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	httpResp := &httpResponse{Response: response}
++	httpResp := &httpResponse{Response: response, responseLimit: r.responseLimit}
+ 	if response.StatusCode != http.StatusOK {
+ 		return nil, errors.New(httpResp.errorString())
+ 	}
+@@ -226,6 +249,7 @@
+ type httpResponse struct {
+ 	*http.Response
+ 
++	responseLimit  int64
+ 	getContentOnce sync.Once
+ 	content        []byte
+ 	contentError   error
+@@ -246,7 +270,19 @@
+ func (h *httpResponse) GetContent() (*StringBox, error) {
+ 	h.getContentOnce.Do(func() {
+ 		defer h.Body.Close()
+-		h.content, h.contentError = io.ReadAll(h.Body)
++		if h.responseLimit > 0 {
++			if h.ContentLength > h.responseLimit {
++				h.contentError = E.New("HTTP_RESPONSE_TOO_LARGE")
++				return
++			}
++			h.content, h.contentError = io.ReadAll(io.LimitReader(h.Body, h.responseLimit+1))
++			if int64(len(h.content)) > h.responseLimit {
++				h.content = nil
++				h.contentError = E.New("HTTP_RESPONSE_TOO_LARGE")
++			}
++		} else {
++			h.content, h.contentError = io.ReadAll(h.Body)
++		}
+ 	})
+ 	if h.contentError != nil {
+ 		return nil, h.contentError

@@ -13,14 +13,22 @@ internal class SubscriptionContentParser(
     /** Unknown optional share-link keys for one parse (A+ tolerant mode). */
     private val shareLinkWarnings = mutableListOf<String>()
     companion object {
+        internal const val MAX_ENTRIES = 10000
+        private const val MAX_BYTES = 8 * 1024 * 1024
+        private fun normalizeText(text: String) = text.trim().removePrefix("\uFEFF").trim()
+        private fun checkEntryCount(count: Int) {
+            require(count <= MAX_ENTRIES) { "Подписка содержит слишком много серверов" }
+        }
+
         fun supports(text: String): Boolean {
-            val trimmed = text.trim().removePrefix("\uFEFF").trim()
+            val trimmed = normalizeText(text)
             if (ForeignSubscriptionParser.looksLike(trimmed) || Regex("(?im)^(vless|vmess|trojan|ss|hysteria|hysteria2|hy2|tuic|anytls|socks|socks5)://").containsMatchIn(trimmed)) return true
             if (trimmed.length !in 20..(8 * 1024 * 1024) || !Regex("[A-Za-z0-9+/=_\\-\\s]+").matches(trimmed)) return false
             val decoded = runCatching { Base64.getDecoder().decode(trimmed.filterNot { it.isWhitespace() }).toString(Charsets.UTF_8) }.getOrElse {
                 runCatching { Base64.getUrlDecoder().decode(trimmed.filterNot { it.isWhitespace() }).toString(Charsets.UTF_8) }.getOrDefault("")
             }
-            return decoded.contains("://") || ForeignSubscriptionParser.looksLike(decoded)
+            val normalized = normalizeText(decoded)
+            return normalized.contains("://") || normalized.startsWith("{") || normalized.startsWith("[") || ForeignSubscriptionParser.looksLike(normalized)
         }
     }
 
@@ -34,16 +42,17 @@ internal class SubscriptionContentParser(
     }
 
     fun parse(raw: String): SubscriptionImportResult {
-        val trimmed = raw.trim().removePrefix("\uFEFF").trim()
-        if (trimmed.length > 8 * 1024 * 1024) throw SubscriptionResponseFailure(SubscriptionResponseProblem.TOO_LARGE)
+        if (raw.length > MAX_BYTES || raw.toByteArray(StandardCharsets.UTF_8).size > MAX_BYTES) throw SubscriptionResponseFailure(SubscriptionResponseProblem.TOO_LARGE)
+        val trimmed = normalizeText(raw)
         val mode = SubscriptionRouting.detectMode(trimmed)
-        val content = tryDecodeBase64(trimmed)
+        val content = normalizeText(tryDecodeBase64(trimmed))
         if (content.trimStart().startsWith('<')) throw SubscriptionResponseFailure(SubscriptionResponseProblem.HTML)
         val foreign = ForeignSubscriptionParser.decode(content)
         if (foreign == null && content.startsWith("{")) {
             val root = JSONObject(content)
             require(root.has("outbounds")) { "Expected a sing-box configuration with outbounds" }
             val nodes = root.getJSONArray("outbounds")
+            checkEntryCount(nodes.length())
             val count =
                 (0 until nodes.length()).count {
                     nodes.optJSONObject(it)?.optString("type") !in
@@ -110,10 +119,16 @@ internal class SubscriptionContentParser(
             nodes.add(node)
         }
         if (foreign != null) {
-            require(foreign.servers.size <= 10000) { "Подписка содержит слишком много серверов" }
+            checkEntryCount(foreign.servers.size)
             for (server in foreign.servers) accept(server.position, server.name) { server.convert() }
         } else if (content.startsWith("[")) {
             val array = JSONArray(content)
+            checkEntryCount(array.length())
+            val tags = mutableSetOf<String>()
+            for (i in 0 until array.length()) {
+                val tag = array.optJSONObject(i)?.optString("tag").orEmpty()
+                require(tag.isBlank() || tags.add(tag)) { "Invalid duplicate outbound tag" }
+            }
             for (i in 0 until array.length()) {
                 val source = array.optJSONObject(i)
                 val name = source?.optString("tag")?.takeIf { it.isNotBlank() }?.take(120)
@@ -123,7 +138,11 @@ internal class SubscriptionContentParser(
                 }
             }
         } else {
-            for ((index, rawLine) in content.lines().withIndex()) {
+            checkEntryCount(content.lineSequence().count { rawLine ->
+                val line = rawLine.trim()
+                line.isNotEmpty() && !line.startsWith('#') && !line.startsWith("//")
+            })
+            for ((index, rawLine) in content.lineSequence().withIndex()) {
                 val line = rawLine.trim()
                 if (line.isEmpty() || line.startsWith('#') || line.startsWith("//")) continue
                 val name = issueNameForLink(line, index + 1)
@@ -136,9 +155,9 @@ internal class SubscriptionContentParser(
             if (w !in warnings) warnings.add(w)
         }
         shareLinkWarnings.clear()
-        val report = SubscriptionImportReport(received, nodes.size, issues, warnings, foreign?.format ?: "Список ссылок")
+        val report = SubscriptionImportReport(received, nodes.size, issues, warnings, foreign?.format ?: if (content.startsWith("[")) "sing-box JSON array" else "Список ссылок")
         if (nodes.isEmpty()) throw SubscriptionResponseFailure(SubscriptionResponseProblem.NO_USABLE_NODES, report)
-        return SubscriptionImportResult(buildSingBoxConfig(nodes, mode), report)
+        return SubscriptionImportResult(buildSingBoxConfig(nodes, mode, preserveTags = foreign == null && content.startsWith("[")), report)
     }
 
     private fun issueNameForLink(line: String, position: Int): String {
@@ -387,7 +406,7 @@ internal class SubscriptionContentParser(
 
         try {
             val decoded = decodeBase64(nonCommentLines)
-            val decodedStr = String(decoded, StandardCharsets.UTF_8).trim()
+            val decodedStr = normalizeText(String(decoded, StandardCharsets.UTF_8))
             if (
                 decodedStr.contains("://") ||
                 decodedStr.startsWith("{") ||
@@ -902,6 +921,7 @@ internal class SubscriptionContentParser(
     private fun buildSingBoxConfig(
         nodes: List<JSONObject>,
         mode: SubscriptionRouting.Mode,
+        preserveTags: Boolean = false,
     ): String {
         val validNodes = nodes.filter { it.optString("type") != "dns" }
 
@@ -911,6 +931,9 @@ internal class SubscriptionContentParser(
         usedTags["direct"] = 1
         usedTags["block"] = 1
         val allocatedTags = usedTags.keys.toMutableSet()
+        if (preserveTags) {
+            validNodes.map { it.optString("tag") }.filter { it.isNotBlank() }.forEach(allocatedTags::add)
+        }
 
         val normalProxyTags = mutableListOf<String>()
         val whitelistProxyTags = mutableListOf<String>()
@@ -921,11 +944,13 @@ internal class SubscriptionContentParser(
             }
             val rawTag =
                 node.optString("tag").ifEmpty { node.optString("server").ifEmpty { "Proxy" } }
-            val cleanTag = cleanNodeName(rawTag)
+            val existingTag = node.optString("tag")
+            val keepTag = preserveTags && existingTag.isNotBlank()
+            val cleanTag = if (keepTag) existingTag else cleanNodeName(rawTag)
             var count = usedTags.getOrDefault(cleanTag, 0)
-            var uniqueTag = if (count > 0) "$cleanTag ($count)" else cleanTag
+            var uniqueTag = if (keepTag) existingTag else if (count > 0) "$cleanTag ($count)" else cleanTag
             // A literal "A (1)" can collide with the suffix generated for a second "A".
-            while (uniqueTag in allocatedTags) {
+            while (!keepTag && uniqueTag in allocatedTags) {
                 count++
                 uniqueTag = "$cleanTag ($count)"
             }

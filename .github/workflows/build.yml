@@ -221,6 +221,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          cp protocol-tests/sfa_subscription_http_test.go sing-box-core/experimental/libbox/sfa_subscription_http_test.go
           cp protocol-tests/dns_client_fallback_test.go sing-box-core/dns/sfa_client_fallback_test.go
           cd sing-box-core
           go test -race -timeout 3m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./dns -run TestSFASequentialDNS
@@ -252,7 +253,7 @@ jobs:
           if [ ! -f "$SFA_B1_BENCH_CONFIG" ] && [ -f "${GITHUB_WORKSPACE}/build/native-configs/harness-vless-reality-domain.json" ]; then
             export SFA_B1_BENCH_CONFIG="${GITHUB_WORKSPACE}/build/native-configs/harness-vless-reality-domain.json"
           fi
-          go test -timeout 10m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./experimental/libbox -run 'TestSFANodeCoreB1' -count=1 -v
+          go test -timeout 10m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./experimental/libbox -run 'TestSFA(NodeCoreB1|SubscriptionHTTP)' -count=1 -v
 
           # CLI process overhead sample (logged only; not a pass/fail gate on duration)
           if [ -f "$SFA_B1_BENCH_CONFIG" ]; then
