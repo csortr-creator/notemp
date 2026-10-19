@@ -12,7 +12,6 @@ import io.nekohasekai.sfa.utils.ProfileContentDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.File
 import java.util.Date
 
 class ProfileImportHandler(private val context: Context) {
@@ -45,7 +44,7 @@ class ProfileImportHandler(private val context: Context) {
     suspend fun importFromUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
         try {
             val data =
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                context.contentResolver.openInputStream(uri)?.use { io.nekohasekai.sfa.utils.ImportInput.read(it) }
                     ?: return@withContext ImportResult.Error(context.getString(R.string.error_empty_file))
 
             // Get the filename from the URI
@@ -63,12 +62,13 @@ class ProfileImportHandler(private val context: Context) {
                 try {
                     ProfileContentDecoder.decodeWithReport(data)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     // If it fails, try one more time as JSON
                     if (dataString.trimStart().startsWith("{") || dataString.trimStart().startsWith("[")) {
                         return@withContext importJsonConfiguration(dataString, filename)
                     }
                     return@withContext ImportResult.Error(
-                        context.getString(R.string.error_decode_profile, e.message),
+                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                     )
                 }
 
@@ -76,14 +76,14 @@ class ProfileImportHandler(private val context: Context) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            ImportResult.Error(e.message ?: "Unknown error")
+            ImportResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
     suspend fun parseUri(uri: Uri): UriParseResult = withContext(Dispatchers.IO) {
         try {
             val data =
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                context.contentResolver.openInputStream(uri)?.use { io.nekohasekai.sfa.utils.ImportInput.read(it) }
                     ?: return@withContext UriParseResult.Error(context.getString(R.string.error_empty_file))
 
             val filename = getFileNameFromUri(uri)
@@ -97,17 +97,19 @@ class ProfileImportHandler(private val context: Context) {
                 try {
                     ProfileContentDecoder.decode(data)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     if (dataString.trimStart().startsWith("{") || dataString.trimStart().startsWith("[")) {
                         return@withContext UriParseResult.Success(name = filename)
                     }
                     return@withContext UriParseResult.Error(
-                        context.getString(R.string.error_decode_profile, e.message),
+                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                     )
                 }
 
             UriParseResult.Success(name = content.name)
         } catch (e: Exception) {
-            UriParseResult.Error(e.message ?: "Unknown error")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            UriParseResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
@@ -124,8 +126,9 @@ class ProfileImportHandler(private val context: Context) {
                         url = profileInfo.url,
                     )
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext QRCodeParseResult.Error(
-                        context.getString(R.string.error_decode_profile, e.message),
+                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                     )
                 }
             }
@@ -145,14 +148,16 @@ class ProfileImportHandler(private val context: Context) {
                 try {
                     ProfileContentDecoder.decode(data.toByteArray())
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext QRCodeParseResult.Error(
-                        context.getString(R.string.error_decode_profile, e.message),
+                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                     )
                 }
 
             return@withContext QRCodeParseResult.LocalProfile(name = content.name)
         } catch (e: Exception) {
-            QRCodeParseResult.Error(e.message ?: "Unknown error")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            QRCodeParseResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
@@ -165,8 +170,9 @@ class ProfileImportHandler(private val context: Context) {
                     val profileInfo = Libbox.parseRemoteProfileImportLink(data)
                     return@withContext importRemoteProfile(profileInfo.name, profileInfo.url)
                 } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext ImportResult.Error(
-                        context.getString(R.string.error_decode_profile, e.message),
+                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                     )
                 }
             }
@@ -182,8 +188,9 @@ class ProfileImportHandler(private val context: Context) {
                     try {
                         ProfileContentDecoder.decodeWithReport(data.toByteArray())
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         return@withContext ImportResult.Error(
-                            context.getString(R.string.error_decode_profile, e.message),
+                            context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                         )
                     }
                 importProfile(content)
@@ -191,7 +198,7 @@ class ProfileImportHandler(private val context: Context) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            ImportResult.Error(e.message ?: "Unknown error")
+            ImportResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
@@ -200,13 +207,15 @@ class ProfileImportHandler(private val context: Context) {
             val content = try {
                 ProfileContentDecoder.decode(data)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 return@withContext QRSParseResult.Error(
-                    context.getString(R.string.error_decode_profile, e.message),
+                    context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                 )
             }
             QRSParseResult.Success(name = content.name)
         } catch (e: Exception) {
-            QRSParseResult.Error(e.message ?: "Unknown error")
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            QRSParseResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
@@ -215,24 +224,23 @@ class ProfileImportHandler(private val context: Context) {
             val content = try {
                 ProfileContentDecoder.decodeWithReport(data)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 return@withContext ImportResult.Error(
-                    context.getString(R.string.error_decode_profile, e.message),
+                    context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
                 )
             }
             importProfile(content)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            ImportResult.Error(e.message ?: "Unknown error")
+            ImportResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 
     private suspend fun importProfile(decoded: io.nekohasekai.sfa.utils.DecodedProfileContent): ImportResult {
         val content = decoded.content
-        Libbox.checkConfig(content.config)
         val typedProfile = TypedProfile()
         val profile = Profile(name = content.name, typed = typedProfile)
-        profile.userOrder = ProfileManager.nextOrder()
 
         when (content.type) {
             Libbox.ProfileTypeLocal -> {
@@ -250,19 +258,8 @@ class ProfileImportHandler(private val context: Context) {
             }
         }
 
-        // Save config file
-        val fileID = ProfileManager.nextFileID()
-        val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
-        val configFile = File(configDirectory, "$fileID.json")
-        configFile.writeText(content.config)
-        decoded.report?.save(configFile.path)
-        typedProfile.path = configFile.path
-
-        // Create profile in database and select it
-        ProfileManager.create(profile, andSelect = true)
-
-        if (typedProfile.type == TypedProfile.Type.Remote && typedProfile.autoUpdate) io.nekohasekai.sfa.bg.UpdateProfileWork.reconfigureUpdater()
-        io.nekohasekai.sfa.compose.base.ImportReportNotifier.show(profile)
+        ProfileManager.createImported(profile, content.config, decoded.report)
+        afterSaved(profile)
         return ImportResult.Success(profile)
     }
 
@@ -277,27 +274,31 @@ class ProfileImportHandler(private val context: Context) {
             }
 
         val profile =
-            Profile(name = name, typed = typedProfile).apply {
-                userOrder = ProfileManager.nextOrder()
-            }
+            Profile(name = name, typed = typedProfile)
 
-        val fileID = ProfileManager.nextFileID()
-        val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
-        val configFile = File(configDirectory, "$fileID.json")
         val result = io.nekohasekai.sfa.utils.HTTPClient().use { it.fetchSubscription(url) }
-        Libbox.checkConfig(result.config)
         profile.name = result.profileName ?: name
         result.updateIntervalMinutes?.let { typedProfile.autoUpdateInterval = it }
-        configFile.writeText(result.config)
-        result.report.save(configFile.path)
-        typedProfile.path = configFile.path
-
-        // Create profile in database and select it
-        ProfileManager.create(profile, andSelect = true)
-
-        if (typedProfile.type == TypedProfile.Type.Remote && typedProfile.autoUpdate) io.nekohasekai.sfa.bg.UpdateProfileWork.reconfigureUpdater()
-        io.nekohasekai.sfa.compose.base.ImportReportNotifier.show(profile)
+        ProfileManager.createImported(profile, result.config, result.report)
+        afterSaved(profile)
         return ImportResult.Success(profile)
+    }
+
+    private suspend fun afterSaved(profile: Profile) {
+        // A notification or scheduler failure must not turn a committed import into
+        // an apparent creation failure, which otherwise encourages duplicate retry.
+        if (profile.typed.type == TypedProfile.Type.Remote && profile.typed.autoUpdate) {
+            runCatching { io.nekohasekai.sfa.bg.UpdateProfileWork.reconfigureUpdater() }.onFailure {
+                android.util.Log.w("ProfileImport", "IMPORT_UPDATER_SCHEDULING_FAILED")
+            }
+        }
+        try {
+            io.nekohasekai.sfa.compose.base.ImportReportNotifier.show(profile)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            android.util.Log.w("ProfileImport", "IMPORT_REPORT_PRESENTATION_FAILED")
+        }
     }
 
     private fun extractProfileNameFromUrl(url: String): String = io.nekohasekai.sfa.utils.SubscriptionMetadata.nameFromUrl(url)
@@ -306,6 +307,7 @@ class ProfileImportHandler(private val context: Context) {
         val uri = Uri.parse(url)
         uri.host ?: url
     } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
         url
     }
 
@@ -352,6 +354,7 @@ class ProfileImportHandler(private val context: Context) {
                 json.has("dns") ||
                 json.has("experimental")
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             // If it's an array, it might still be valid
             trimmed.startsWith("[") && trimmed.endsWith("]")
         }
@@ -365,17 +368,6 @@ class ProfileImportHandler(private val context: Context) {
                 null
             }
             val config = converted?.config ?: jsonContent
-            // Validate the JSON configuration using sing-box
-            try {
-                // Try to check the configuration
-                Libbox.checkConfig(config)
-            } catch (e: Exception) {
-                // Configuration validation failed
-                return ImportResult.Error(
-                    context.getString(R.string.error_invalid_configuration, e.message),
-                )
-            }
-
             // Create a local profile with the JSON configuration
             val typedProfile =
                 TypedProfile().apply {
@@ -386,27 +378,15 @@ class ProfileImportHandler(private val context: Context) {
                 Profile(
                     name = profileName.ifEmpty { "Imported Profile" },
                     typed = typedProfile,
-                ).apply {
-                    userOrder = ProfileManager.nextOrder()
-                }
+                )
 
-            // Save the configuration file
-            val fileID = ProfileManager.nextFileID()
-            val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
-            val configFile = File(configDirectory, "$fileID.json")
-            configFile.writeText(config)
-            converted?.report?.save(configFile.path)
-            typedProfile.path = configFile.path
-
-            // Create profile in database and select it
-            ProfileManager.create(profile, andSelect = true)
-
-            io.nekohasekai.sfa.compose.base.ImportReportNotifier.show(profile)
+            ProfileManager.createImported(profile, config, converted?.report)
+            afterSaved(profile)
             ImportResult.Success(profile)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            ImportResult.Error(e.message ?: "Unknown error importing JSON configuration")
+            ImportResult.Error(io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e))
         }
     }
 }

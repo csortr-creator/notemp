@@ -210,7 +210,7 @@ class HTTPClient : Closeable {
                 checkActive = checkActive,
                 validateNode = { node -> NodeCoreValidator.validateOrThrow(node) },
             )
-                .parse(raw)
+                .let { parser -> SubscriptionDiagnostics.at(SubscriptionStage.PARSE) { parser.parse(raw) } }
         } finally {
             NodeCoreValidator.endBatch()
         }

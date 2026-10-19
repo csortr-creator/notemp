@@ -67,6 +67,34 @@ object ProfileManager {
         return profile
     }
 
+    /** Publish a fully prepared config once; post-save selection cannot undo the row. */
+    internal suspend fun createImported(
+        profile: Profile,
+        config: String,
+        report: io.nekohasekai.sfa.utils.SubscriptionImportReport? = null,
+    ): Profile {
+        io.nekohasekai.sfa.utils.ImportCreationCommit.create(
+            directory = java.io.File(Application.application.filesDir, "configs"),
+            content = config,
+            validate = { io.nekohasekai.libbox.Libbox.checkConfig(it) },
+            saveReport = { file -> report?.save(file.path) },
+            persist = { file ->
+                profile.typed.path = file.path
+                instance.withTransaction {
+                    profile.userOrder = instance.profileDao().nextOrder() ?: 0L
+                    profile.id = instance.profileDao().insert(profile)
+                }
+            },
+        )
+        // These side effects happen after durable creation. Their failure must not
+        // present an already saved profile as an import failure and encourage duplicates.
+        runCatching { Settings.selectedProfile = profile.id }.onFailure {
+            android.util.Log.w("ProfileManager", "PROFILE_SELECTION_FAILED")
+        }
+        notifyCallbacks()
+        return profile
+    }
+
     /** Update only fetch metadata from the latest row; never restore a pre-fetch profile snapshot. */
     suspend fun markSubscriptionUpdated(id: Long, path: String, remoteURL: String): Date {
         val updatedAt = instance.withTransaction {

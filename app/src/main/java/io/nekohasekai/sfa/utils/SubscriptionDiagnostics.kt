@@ -81,7 +81,7 @@ internal object SubscriptionDiagnostics {
         return when (issue.reason) {
             "Unsupported QUIC uTLS fingerprint" -> "uTLS fingerprint не поддерживается для QUIC этим ядром"
             "Unsupported conflicting Hysteria2 Chrome fingerprint options" -> "fp=chrome конфликтует с отключённым QUIC Chrome parrot"
-            else -> null
+            else -> ImportFeatureDiagnostics.detail(issue.reason)
         }
     }
 }

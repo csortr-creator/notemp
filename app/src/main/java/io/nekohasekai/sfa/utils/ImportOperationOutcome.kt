@@ -73,6 +73,26 @@ internal object ImportResultFormatter {
         }
     }
 
+    fun creationFailure(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(32).toList()
+        val creationStage = chain.filterIsInstance<ImportCreationFailure>().firstOrNull()?.stage
+        val reason = when (creationStage) {
+            ImportCreationStage.VALIDATE -> "CONFIG_INVALID: ядро отклонило итоговую конфигурацию"
+            ImportCreationStage.WRITE -> "CONFIG_WRITE_FAILED: не удалось сохранить файл профиля"
+            ImportCreationStage.REPORT -> "IMPORT_REPORT_WRITE_FAILED: не удалось сохранить отчёт импорта"
+            ImportCreationStage.DATABASE -> "PROFILE_DATABASE_FAILED: не удалось сохранить профиль в базе"
+            null -> if (chain.any { it is ImportValidationFailure }) {
+                "CONFIG_INVALID: ядро отклонило итоговую конфигурацию"
+            } else SubscriptionDiagnostics.reason(error)
+        }
+        return format(
+            ImportOperationOutcome.REJECTED,
+            SubscriptionDiagnostics.reportOf(error),
+            hadPreviousConfig = false,
+            reason = reason,
+        )
+    }
+
     fun commitFailureReason(error: Throwable): String = if (generateSequence(error) { it.cause }.any { it is ImportValidationFailure }) {
         "CONFIG_INVALID: ядро отклонило итоговую конфигурацию; файл не изменён"
     } else {

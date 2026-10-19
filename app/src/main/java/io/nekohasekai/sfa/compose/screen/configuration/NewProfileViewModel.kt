@@ -4,7 +4,6 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.sfa.R
 import io.nekohasekai.sfa.bg.UpdateProfileWork
 import io.nekohasekai.sfa.database.Profile
@@ -187,7 +186,9 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
             return false
         }
 
-        // If validation passes, create the profile
+        if (state.isSaving || state.isSuccess) return false
+        // Reserve synchronously; a second click cannot enqueue another import.
+        _uiState.update { it.copy(isSaving = true, errorMessage = null) }
         createProfile()
         return true
     }
@@ -207,9 +208,10 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
                     }
 
                 if (state.profileType == ProfileType.Remote || state.profileSource == ProfileSource.Import) {
-                    run {
-                        val report =
+                    try {
+                        val report = withContext(Dispatchers.IO) {
                             io.nekohasekai.sfa.utils.SubscriptionImportReport.read(profile.typed.path)
+                        }
                         val op =
                             when {
                                 report == null ->
@@ -222,6 +224,10 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
                                     io.nekohasekai.sfa.utils.ImportOperationOutcome.APPLIED
                             }
                         io.nekohasekai.sfa.compose.base.ImportReportNotifier.show(profile, op)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        android.util.Log.w("ProfileImport", "IMPORT_REPORT_PRESENTATION_FAILED")
                     }
                 }
                 _uiState.update {
@@ -231,11 +237,14 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
                         createdProfile = profile,
                     )
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _uiState.update { it.copy(isSaving = false) }
+                throw e
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         isSaving = false,
-                        errorMessage = "Не удалось создать профиль: ошибка импорта или сохранения",
+                        errorMessage = io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
             }
@@ -250,14 +259,7 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
             }
 
         val profile =
-            Profile(name = state.name, typed = typedProfile).apply {
-                userOrder = ProfileManager.nextOrder()
-            }
-
-        val fileID = ProfileManager.nextFileID()
-        val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
-        val configFile = File(configDirectory, "$fileID.json")
-        typedProfile.path = configFile.path
+            Profile(name = state.name, typed = typedProfile)
 
         var importReport: io.nekohasekai.sfa.utils.SubscriptionImportReport? = null
         // Get config content
@@ -275,10 +277,10 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
                             when {
                                 sourceURL.startsWith("content://") -> {
                                     val inputStream = context.contentResolver.openInputStream(uri) as InputStream
-                                    inputStream.use { it.bufferedReader().readText() }
+                                    inputStream.use { io.nekohasekai.sfa.utils.ImportInput.read(it).toString(Charsets.UTF_8) }
                                 }
                                 sourceURL.startsWith("file://") -> {
-                                    File(Uri.parse(sourceURL).path!!).readText()
+                                    File(Uri.parse(sourceURL).path!!).inputStream().use { io.nekohasekai.sfa.utils.ImportInput.read(it).toString(Charsets.UTF_8) }
                                 }
                                 sourceURL.startsWith("http://") || sourceURL.startsWith("https://") -> {
                                     HTTPClient().use { it.fetchSubscription(sourceURL) }.also { importReport = it.report }.config
@@ -294,23 +296,17 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
             }
 
         // Files may contain share links just like QR/clipboard imports.
-        val resolvedConfig = if (io.nekohasekai.sfa.utils.SubscriptionContentParser.supports(configContent)) {
+        val resolvedConfig = if (importReport == null && io.nekohasekai.sfa.utils.SubscriptionContentParser.supports(configContent)) {
             ProfileContentDecoder.decodeWithReport(configContent.toByteArray(Charsets.UTF_8)).also { importReport = it.report }.content.config
         } else {
             configContent
         }
-        Libbox.checkConfig(resolvedConfig)
-        configFile.writeText(resolvedConfig)
-        importReport?.save(configFile.path)
-
-        // Create profile in database and select it
-        ProfileManager.create(profile, andSelect = true)
+        ProfileManager.createImported(profile, resolvedConfig, importReport)
 
         return profile
     }
 
     private suspend fun createRemoteProfile(state: NewProfileUiState): Profile {
-        val context = getApplication<Application>()
         val typedProfile =
             TypedProfile().apply {
                 type = TypedProfile.Type.Remote
@@ -321,30 +317,15 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
             }
 
         val profile =
-            Profile(name = state.name, typed = typedProfile).apply {
-                userOrder = ProfileManager.nextOrder()
-            }
-
-        val fileID = ProfileManager.nextFileID()
-        val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
-        val configFile = File(configDirectory, "$fileID.json")
-        typedProfile.path = configFile.path
+            Profile(name = state.name, typed = typedProfile)
 
         // Fetch initial config - this MUST succeed for remote profiles
         val result = HTTPClient().use { it.fetchSubscription(state.remoteUrl) }
-        val content = result.config
-        Libbox.checkConfig(content)
-        val configContent = content
-
-        configFile.writeText(configContent)
-        result.report.save(configFile.path)
-
-        // Create profile in database and select it
-        ProfileManager.create(profile, andSelect = true)
-
-        // Reconfigure updater if auto-update is enabled
+        ProfileManager.createImported(profile, result.config, result.report)
         if (state.autoUpdate) {
-            UpdateProfileWork.reconfigureUpdater()
+            runCatching { UpdateProfileWork.reconfigureUpdater() }.onFailure {
+                android.util.Log.w("ProfileImport", "IMPORT_UPDATER_SCHEDULING_FAILED")
+            }
         }
 
         return profile

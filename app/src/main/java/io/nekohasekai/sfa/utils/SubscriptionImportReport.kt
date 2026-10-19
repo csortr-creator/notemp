@@ -22,12 +22,12 @@ data class SubscriptionImportReport(
 
     fun displayText(): String = buildString {
         append("Формат: $format\n")
-        append(summary())
+        append(ImportResultFormatter.format(
+            if (imported == 0 && received > 0) ImportOperationOutcome.REJECTED
+            else ImportResultFormatter.fromCommit(replaced = true, report = this@SubscriptionImportReport),
+            this@SubscriptionImportReport,
+        ))
         if (warnings.isNotEmpty()) append("\n\n" + warnings.joinToString("\n\n"))
-        for (issue in issues) {
-            val location = if (format == "Список ссылок") "Строка" else "Запись"
-            append("\n\n$location ${issue.line} · ${issue.name}\n${issue.reason}")
-        }
     }
 
     fun save(configPath: String) {

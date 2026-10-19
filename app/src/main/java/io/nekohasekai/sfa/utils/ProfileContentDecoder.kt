@@ -12,13 +12,19 @@ internal data class DecodedProfileContent(
 object ProfileContentDecoder {
     fun decode(data: ByteArray): ProfileContent = decodeWithReport(data).content
 
-    internal fun decodeWithReport(data: ByteArray): DecodedProfileContent {
+    internal fun decodeWithReport(data: ByteArray): DecodedProfileContent =
+        SubscriptionDiagnostics.at(SubscriptionStage.PARSE) { decodeBounded(data) }
+
+    private fun decodeBounded(data: ByteArray): DecodedProfileContent {
+        ImportInput.checkSize(data.size)
         val text = data.toString(Charsets.UTF_8).trim()
         if (!SubscriptionContentParser.supports(text)) {
             return DecodedProfileContent(Libbox.decodeProfileContent(data), null)
         }
-        val result = HTTPClient().use { it.parseSubscription(text) }
-        Libbox.checkConfig(result.config)
+        val result = SubscriptionDiagnostics.at(SubscriptionStage.PARSE) { HTTPClient().use { it.parseSubscription(text) } }
+        try { Libbox.checkConfig(result.config) } catch (e: Exception) {
+            throw ImportValidationFailure(e)
+        }
         val name =
             JSONObject(result.config).getJSONArray("outbounds").let { outbounds ->
                 (0 until outbounds.length())

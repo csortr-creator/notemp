@@ -24,6 +24,9 @@ internal class SubscriptionContentParser(
 
         fun supports(text: String): Boolean {
             val trimmed = normalizeText(text)
+            if (trimmed.length > MAX_BYTES) return false
+            if (trimmed.startsWith("[")) return true
+            if (trimmed.startsWith("{") && runCatching { JSONObject(trimmed).has("outbounds") }.getOrDefault(false)) return true
             if (ForeignSubscriptionParser.looksLike(trimmed) || Regex("(?im)^(vless|vmess|trojan|ss|hysteria|hysteria2|hy2|tuic|anytls|socks|socks5)://").containsMatchIn(trimmed)) return true
             if (trimmed.length !in 20..(8 * 1024 * 1024) || !Regex("[A-Za-z0-9+/=_\\-\\s]+").matches(trimmed)) return false
             val decoded = runCatching { Base64.getDecoder().decode(trimmed.filterNot { it.isWhitespace() }).toString(Charsets.UTF_8) }.getOrElse {
