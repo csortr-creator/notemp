@@ -37,6 +37,16 @@ class ExternalStopTest {
     }
 
     @Test
+    fun stopAfterNativeLoadInvalidatesDelayedStartedPublication() {
+        val start = RuntimeProfileState.nextSwitchRequestId()
+        assertTrue(RuntimeProfileState.beginStart(start, 44))
+        assertTrue(RuntimeProfileState.tryMarkLoaded(start, 44, "config"))
+        RuntimeProfileState.requestUserStop()
+        assertFalse(RuntimeProfileState.isStartCurrent(start, 44))
+        RuntimeProfileState.clear()
+    }
+
+    @Test
     fun internalSwitchDoesNotCancelTheQueue() {
         val queue = ProfileSelectionQueue(RuntimeProfileState::currentUserStopId)
         queue.offer(11, true)

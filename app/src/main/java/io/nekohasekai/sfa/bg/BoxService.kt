@@ -271,11 +271,22 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 "RUNTIME_LOADED requestId=$requestId profileId=$selectedProfileId " +
                     "fp=${RuntimeProfileState.loadedConfigFingerprint}",
             )
-            status.postValue(Status.Started)
-            withContext(Dispatchers.Main) {
-                notification.show(lastProfileName, R.string.status_started)
+            // Stop may arrive after tryMarkLoaded but before Main publishes Started.
+            // Serialize the final generation check and publication with the receiver.
+            val published = withContext(Dispatchers.Main) {
+                if (!RuntimeProfileState.isStartCurrent(requestId, selectedProfileId)) {
+                    false
+                } else {
+                    status.value = Status.Started
+                    notification.show(lastProfileName, R.string.status_started)
+                    notification.start()
+                    true
+                }
             }
-            notification.start()
+            if (!published) {
+                quietStopAfterStaleStart()
+                return
+            }
         } catch (e: Exception) {
             stopAndAlert(Alert.StartService, e.message)
             return
