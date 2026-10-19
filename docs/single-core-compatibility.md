@@ -243,6 +243,15 @@ tests cover 26.3.27 and 26.9.9, including negative key/short-ID controls and
 Reality/XHTTP. This does not disable peer authentication or change imported
 credentials, fingerprints, TLS settings, or transport parameters.
 
+### HTTP/1 XHTTP connection lifecycle
+
+The cleartext HTTP/1 branch now disables HTTP connection pooling, matching the
+reference Xray dialer. Its source documents the problem with pooled chunked
+downloads through a custom dialer; the TLS HTTP/1 branch already used this setting.
+`TestTransportResourceCleanup` reproduced `context canceled` with the old
+cleartext branch (both locally and in CI). After the change, 200 repetitions
+with the race detector pass across stream-one, stream-up, and packet-up.
+
 
 ### Reality ALPN preservation
 

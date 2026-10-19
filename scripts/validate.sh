@@ -40,6 +40,7 @@ REQUIRED_CORE_PATCHES=(
   sing-box-1.14.2-xhttp-authority.patch
   sing-box-1.14.2-reality-alpn.patch
   sing-box-1.14.2-reality-version-policy.patch
+  sing-box-1.14.2-xhttp-http1-lifecycle.patch
 )
 
 usage() {

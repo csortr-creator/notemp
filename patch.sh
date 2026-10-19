@@ -170,6 +170,15 @@ else
     git -C sing-box-core apply "$PWD/$REALITY_VERSION_POLICY_PATCH"
 fi
 
+# Follow Xray's HTTP/1 connection lifecycle for chunked downloads.
+XHTTP_HTTP1_LIFECYCLE_PATCH=patches/sing-box-1.14.2-xhttp-http1-lifecycle.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$XHTTP_HTTP1_LIFECYCLE_PATCH" 2>/dev/null; then
+    echo "XHTTP HTTP/1 lifecycle patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$XHTTP_HTTP1_LIFECYCLE_PATCH"
+    git -C sing-box-core apply "$PWD/$XHTTP_HTTP1_LIFECYCLE_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 
