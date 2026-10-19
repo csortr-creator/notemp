@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	"github.com/sagernet/sing-vmess/vless"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/protocol/socks"
 )
 
@@ -149,6 +151,8 @@ func providerErrorCode(err error) string {
 	switch {
 	case strings.Contains(s, "reality verification failed"):
 		return "reality_auth_failed"
+	case strings.Contains(s, "domain not resolved") || strings.Contains(s, "no such host"):
+		return "dns_failed"
 	case strings.Contains(s, "certificate") || strings.Contains(s, "x509"):
 		return "certificate_failed"
 	case strings.Contains(s, "deadline") || strings.Contains(s, "timeout"):
@@ -175,10 +179,16 @@ func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine
 	if splitErr != nil {
 		return "target_config", splitErr
 	}
-	d, err := dialer.NewDefault(ctx, option.DialerOptions{})
+	rawDialer, err := dialer.NewDefault(ctx, option.DialerOptions{})
 	if err != nil {
 		return "dialer", err
 	}
+	// The isolated TLS fixture has no application DNS router. DefaultDialer
+	// accepts only IPs; resolve the physical endpoint through the runner's
+	// resolver, as reference Xray does. Preserve the original TLS SNI/authority.
+	d := providerResolvingDialer{Dialer: rawDialer, lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	}}
 	var conn net.Conn
 	if engine == "xray" {
 		address, closePeer, err := providerXray(ctx, t, n, fp, binary)
@@ -262,6 +272,62 @@ func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine
 		return "origin_status", fmt.Errorf("unexpected status")
 	}
 	return "complete", nil
+}
+
+type providerResolvingDialer struct {
+	N.Dialer
+	lookup func(context.Context, string) ([]netip.Addr, error)
+}
+
+func (d providerResolvingDialer) DialContext(ctx context.Context, network string, address M.Socksaddr) (net.Conn, error) {
+	if !address.IsDomain() {
+		return d.Dialer.DialContext(ctx, network, address)
+	}
+	addresses, err := d.lookup(ctx, address.Fqdn)
+	if err != nil {
+		return nil, err
+	}
+	return N.DialSerial(ctx, d.Dialer, network, address, addresses)
+}
+
+func TestSFAProviderDomainDialer(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	raw, err := dialer.NewDefault(ctx, option.DialerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := M.ParseSocksaddrHostPort("fixture.invalid", uint16(listener.Addr().(*net.TCPAddr).Port))
+	if conn, err := raw.DialContext(ctx, "tcp", destination); err == nil {
+		conn.Close()
+		t.Fatal("fixture must expose unresolved default dialer")
+	}
+	resolved := false
+	d := providerResolvingDialer{Dialer: raw, lookup: func(_ context.Context, host string) ([]netip.Addr, error) {
+		if host != "fixture.invalid" {
+			t.Fatal("original domain lost")
+		}
+		resolved = true
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}}
+	conn, err := d.DialContext(ctx, "tcp", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if !resolved {
+		t.Fatal("resolver was not called")
+	}
+	conn, err = d.DialContext(ctx, "tcp", M.SocksaddrFromNet(listener.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
 }
 
 func providerXray(ctx context.Context, t *testing.T, n providerNode, fp, binary string) (string, func(), error) {
