@@ -135,4 +135,15 @@ class SubscriptionRefreshHardeningTest {
         }
     }
 
+    @Test fun cancellationBetweenRecordsDoesNotBecomePartialImport() {
+        var checks = 0
+        var validated = 0
+        val parser = SubscriptionContentParser(checkActive = {
+            if (++checks == 3) throw java.util.concurrent.CancellationException("stopped")
+        }, validateNode = { validated++ })
+        try { parser.parse(List(100) { link }.joinToString("\n")); fail("Expected cancellation") }
+        catch (_: java.util.concurrent.CancellationException) { }
+        assertEquals(1, validated)
+    }
+
 }

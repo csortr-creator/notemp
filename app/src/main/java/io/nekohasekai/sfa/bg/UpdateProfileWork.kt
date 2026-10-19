@@ -89,7 +89,7 @@ class UpdateProfileWork {
                     val remoteURL = profile.typed.remoteURL
                     val expected = ProfileConfigCommit.beginUpdate(profile.id, profile.typed.path)
                     val hadPrevious = ImportResultFormatter.configFileExists(profile.typed.path)
-                    val result = HTTPClient().use { it.getSubscription(remoteURL) }
+                    val result = HTTPClient().use { it.fetchSubscription(remoteURL) }
                     val content = result.config
                     val report = result.report
                     val decision =

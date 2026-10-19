@@ -55,13 +55,16 @@ object SubscriptionFetchRetry {
     fun <T> run(
         sleep: (Long) -> Unit = { ms -> if (ms > 0) Thread.sleep(ms) },
         onAttempt: ((attempt: Int, code: String, willRetry: Boolean) -> Unit)? = null,
+        checkActive: () -> Unit = {},
         block: () -> T,
     ): T {
         var last: Throwable? = null
         for (attempt in 1..MAX_ATTEMPTS) {
+            checkActive()
             try {
                 return block()
             } catch (t: Exception) {
+                checkActive()
                 if (t is java.util.concurrent.CancellationException || t is InterruptedException) throw t
                 last = t
                 val code = NetworkErrorPresentation.logCode(t)

@@ -344,3 +344,58 @@ so system rules introduced during migration have valid targets; existing tags an
 outbounds remain intact. Generated URI/Clash/Xray profiles keep their generated
 selector behavior. The user's runtime final-outbound override remains a separate
 application setting.
+
+### Stop/reload ownership, network generations, and cancellable SRS preparation
+
+Reload captures the running profile and switch generation before queueing or
+preparing rules. It shares the lifecycle mutex with start/teardown and checks the
+original ticket before native reload, runtime-state commit, and Main-thread Started
+publication. It cannot adopt a generation created by Stop. Persisting the selected
+profile is part of the final Main-thread publication instead of an earlier IO write.
+Unscoped BoxService Stop invalidates a pending start even before receiver registration.
+Starting can transition to Stopping; active start/reload jobs and interface registration
+are cancelled. A concurrent native CloseService interrupts native startup before
+teardown waits on the Kotlin lifecycle lock. TUN release and command-server closure
+are idempotent and best-effort so one failed cleanup does not strand Stopping.
+Managed RPC Stop, revocation, and unexpected destruction use the same stop path.
+
+Network callbacks enqueue without blocking Main/ConnectivityThread. Each Android
+registration has a generation; late available/update/lost events cannot mutate a
+replacement registration. Cancelled Get requests are removed, the last subscriber
+cancels pending waits, registration errors return to their caller, and a broken
+listener does not terminate the shared actor. A cancelled Start removes only its
+own listener, not a later registration under the same key. Legacy fallback avoids
+selecting the VPN itself as its underlying network.
+
+Initial interface polling runs outside the network monitor lock. It retries a
+snapshot replaced before publication and can be cancelled during Stop, including
+late registrations arriving after Stop began. Offline probes also wait for usable
+LinkProperties/interface index before returning to native startup; network availability
+alone is insufficient. An old awaited network result does not overwrite the live
+monitor snapshot after onLost.
+
+Subscription fetches and SRS downloads share an explicit cancellation bridge: Close
+cancels native HTTP context and unblocks JNI network work. Subscription retry and
+per-record parsing check cancellation, so a close-induced connection error does not
+turn into another retry or partial import. Lazy HTTP creation cannot leak a client
+created concurrently with Close. The first Java SRS cancellation experiment failed:
+HttpURLConnection.disconnect did not unblock an active read within 1.5 seconds. The
+production implementation therefore uses the native client with its full-exchange
+30-second deadline rather than relying on Java interruption/disconnect.
+
+The additional stream-bounds patch applies an explicitly configured response limit
+to WriteTo/WriteToWithProgress as well as buffered GetContent. SRS uses 16 MiB and
+subscription text uses 8 MiB. A default/unset limit leaves other file downloads
+unchanged. SRS writes use unique temporary files, fsync, native validation, and atomic
+replace, and remove incomplete files on failure/cancellation. Bundled preset seeding
+requires both the exact preset URL and binary format; a matching tag alone must not
+substitute a different source. Cache filenames bound the user-supplied tag component.
+
+JVM tests compile fresh copies of the production network/SRS adapters against
+OS/JNI test doubles. They exercise the actual coroutine/channel/file orchestration,
+including delayed LinkProperties, stale callbacks, Stop during initial interface wait,
+and cancellation of a synthetic HTTP response. These test doubles are confined to
+protocol-tests and do not enter the APK. Native Go HTTP tests independently cover
+bounded file copies and cancellation of an active streamed read under race detection.
+Physical Android lifecycle, JNI integration, and device Wi-Fi/mobile handoff remain
+separate verification gates; passing these tests does not mark those gates complete.

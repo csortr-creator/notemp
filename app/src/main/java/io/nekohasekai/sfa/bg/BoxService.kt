@@ -37,7 +37,10 @@ import io.nekohasekai.sfa.database.Settings
 import io.nekohasekai.sfa.ktx.hasPermission
 import io.nekohasekai.sfa.utils.UserRoutingConfig
 import io.nekohasekai.sfa.vendor.Vendor
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -83,12 +86,14 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         }
 
         fun stop(expectedProfileId: Long = -1L, stopRequestId: Long = -1L) {
+            // Invalidate even when a start Intent has not registered its receiver yet.
+            val requestId = if (expectedProfileId <= 0L && stopRequestId <= 0L) RuntimeProfileState.requestUserStop() else stopRequestId
             Application.application.sendBroadcast(
                 Intent(Action.SERVICE_CLOSE).setPackage(
                     Application.application.packageName,
                 ).apply {
                     if (expectedProfileId > 0L) putExtra(EXTRA_STOP_PROFILE_ID, expectedProfileId)
-                    if (stopRequestId > 0L) putExtra(EXTRA_STOP_REQUEST_ID, stopRequestId)
+                    if (requestId > 0L) putExtra(EXTRA_STOP_REQUEST_ID, requestId)
                 },
             )
         }
@@ -100,6 +105,9 @@ class BoxService(private val service: Service, private val platformInterface: Pl
     private val binder = ServiceBinder(status)
     private val notification = ServiceNotification(service)
     private lateinit var commandServer: CommandServer
+    @Volatile private var commandServerRunning = false
+    private var startJob: Job? = null
+    @Volatile private var reloadJob: Job? = null
 
     private var receiverRegistered = false
     private val receiver =
@@ -146,6 +154,7 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         val commandServer = CommandServer(this, platformInterface)
         commandServer.start()
         this.commandServer = commandServer
+        commandServerRunning = true
     }
 
     private var lastProfileName = ""
@@ -228,7 +237,8 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                     },
                 )
             } catch (e: Exception) {
-                stopAndAlert(Alert.CreateService, e.message)
+                if (!RuntimeProfileState.isStartCurrent(requestId, selectedProfileId)) quietStopAfterStaleStart()
+                else stopAndAlert(Alert.CreateService, e.message)
                 return
             }
 
@@ -257,15 +267,6 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 quietStopAfterStaleStart()
                 return
             }
-            // R2b: persist selected only after successful load of this generation.
-            if (SwitchStartResolver.shouldPersistSelectedAfterLoad(
-                    targetProfileId = selectedProfileId,
-                    markLoadedSucceeded = true,
-                    requestIdStillCurrent = requestId == RuntimeProfileState.currentSwitchRequestId(),
-                )
-            ) {
-                Settings.selectedProfile = selectedProfileId
-            }
             android.util.Log.i(
                 SWITCH_TAG,
                 "RUNTIME_LOADED requestId=$requestId profileId=$selectedProfileId " +
@@ -274,9 +275,10 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             // Stop may arrive after tryMarkLoaded but before Main publishes Started.
             // Serialize the final generation check and publication with the receiver.
             val published = withContext(Dispatchers.Main) {
-                if (!RuntimeProfileState.isStartCurrent(requestId, selectedProfileId)) {
+                if (status.value == Status.Stopping || !RuntimeProfileState.isStartCurrent(requestId, selectedProfileId)) {
                     false
                 } else {
+                    Settings.selectedProfile = selectedProfileId
                     status.value = Status.Started
                     notification.show(lastProfileName, R.string.status_started)
                     notification.start()
@@ -287,21 +289,21 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 quietStopAfterStaleStart()
                 return
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            stopAndAlert(Alert.StartService, e.message)
+            if (!RuntimeProfileState.isStartCurrent(requestId, profileId)) quietStopAfterStaleStart()
+            else stopAndAlert(Alert.StartService, e.message)
             return
         }
     }
 
     override fun serviceStop() {
-        notification.close()
-        status.postValue(Status.Starting)
-        val pfd = fileDescriptor
-        if (pfd != null) {
-            pfd.close()
-            fileDescriptor = null
+        // Managed RPC Stop is the same explicit user action as the Tile/notification.
+        runBlocking(Dispatchers.Main.immediate) {
+            RuntimeProfileState.requestUserStop()
+            stopService()
         }
-        closeService()
     }
 
     override fun serviceReload() {
@@ -310,12 +312,34 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         }
     }
 
-    suspend fun serviceReload0() = reloadMutex.withLock {
-        serviceReloadLocked()
+    suspend fun serviceReload0() {
+        val ticket = RuntimeProfileState.captureReload(Settings.selectedProfile) ?: return
+        reloadMutex.withLock {
+            lifecycleMutex.withLock lifecycle@{
+                val operationJob = currentCoroutineContext()[Job]
+                val accepted = withContext(Dispatchers.Main) {
+                    if (status.value == Status.Started && Settings.selectedProfile == ticket.profileId && RuntimeProfileState.isReloadCurrent(ticket)) {
+                        reloadJob = operationJob
+                        true
+                    } else false
+                }
+                if (!accepted) return@lifecycle
+                try {
+                    serviceReloadLocked(ticket)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (!RuntimeProfileState.isReloadCurrent(ticket)) quietStopAfterStaleStart()
+                    else stopAndAlert(Alert.StartService, e.message)
+                } finally {
+                    if (reloadJob === operationJob) reloadJob = null
+                }
+            }
+        }
     }
 
-    private suspend fun serviceReloadLocked() {
-        val selectedProfileId = Settings.selectedProfile
+    private suspend fun serviceReloadLocked(ticket: RuntimeProfileState.ReloadTicket) {
+        val selectedProfileId = ticket.profileId
         if (selectedProfileId == -1L) {
             stopAndAlert(Alert.EmptyConfiguration)
             return
@@ -341,12 +365,15 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         }
         val runtimeContent = io.nekohasekai.sfa.utils.RuleSetUpdater.ensureRuleSets(Application.application, UserRoutingConfig.applyToConfig(content, Settings.routingConfigJson), Settings.ruleSetUpdateInterval)
         lastProfileName = profile.name
-        status.postValue(Status.Starting)
-        withContext(Dispatchers.Main) {
-            notification.show(lastProfileName, R.string.status_starting)
+        val accepted = withContext(Dispatchers.Main) {
+            if (status.value != Status.Started || Settings.selectedProfile != ticket.profileId || !RuntimeProfileState.isReloadCurrent(ticket)) false else {
+                status.value = Status.Starting
+                notification.show(lastProfileName, R.string.status_starting)
+                true
+            }
         }
-        fileDescriptor?.close()
-        fileDescriptor = null
+        if (!accepted) return
+        closeTun()
         try {
             commandServer.startOrReloadService(
                 runtimeContent,
@@ -363,7 +390,8 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 },
             )
         } catch (e: Exception) {
-            stopAndAlert(Alert.CreateService, e.message)
+            if (!RuntimeProfileState.isReloadCurrent(ticket)) quietStopAfterStaleStart()
+            else stopAndAlert(Alert.CreateService, e.message)
             return
         }
 
@@ -381,13 +409,14 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 return
             }
         }
-        val requestId = RuntimeProfileState.currentSwitchRequestId()
-        if (!RuntimeProfileState.tryMarkLoaded(requestId, selectedProfileId, runtimeContent)) {
+        val requestId = ticket.requestId
+        if (!RuntimeProfileState.tryMarkReloaded(ticket, runtimeContent)) {
             android.util.Log.w(
                 SWITCH_TAG,
                 "STALE_DISCARD requestId=$requestId current=${RuntimeProfileState.currentSwitchRequestId()} " +
                     "profileId=$selectedProfileId (reload completion superseded)",
             )
+            quietStopAfterStaleStart()
             return
         }
         android.util.Log.i(
@@ -395,10 +424,15 @@ class BoxService(private val service: Service, private val platformInterface: Pl
             "RUNTIME_LOADED requestId=$requestId profileId=$selectedProfileId " +
                 "fp=${RuntimeProfileState.loadedConfigFingerprint}",
         )
-        status.postValue(Status.Started)
-        withContext(Dispatchers.Main) {
-            notification.show(lastProfileName, R.string.status_started)
+        val published = withContext(Dispatchers.Main) {
+            if (status.value == Status.Stopping || Settings.selectedProfile != ticket.profileId || !RuntimeProfileState.isReloadCurrent(ticket)) false else {
+                status.value = Status.Started
+                notification.show(lastProfileName, R.string.status_started)
+                notification.start()
+                true
+            }
         }
+        if (!published) quietStopAfterStaleStart()
     }
 
     override fun getSystemProxyStatus(): SystemProxyStatus? {
@@ -426,28 +460,24 @@ class BoxService(private val service: Service, private val platformInterface: Pl
 
     @OptIn(DelicateCoroutinesApi::class)
     private fun stopService() {
-        if (status.value != Status.Started) return
+        if (status.value == Status.Stopped || status.value == Status.Stopping) return
         status.value = Status.Stopping
+        DefaultNetworkMonitor.cancelPendingRegistration()
+        startJob?.cancel()
+        reloadJob?.cancel()
         if (receiverRegistered) {
             service.unregisterReceiver(receiver)
             receiverRegistered = false
         }
         notification.close()
+        val serverToStop = if (commandServerRunning) commandServer else null
         GlobalScope.launch(Dispatchers.IO) {
+            // Native CloseService interrupts Start before waiting for its lifecycle lock.
+            val interrupt = launch { runCatching { serverToStop?.closeService() } }
             lifecycleMutex.withLock {
-                val pfd = fileDescriptor
-                if (pfd != null) {
-                    pfd.close()
-                    fileDescriptor = null
-                }
-                DefaultNetworkMonitor.stop()
-                if (::commandServer.isInitialized) {
-                    closeService()
-                    commandServer.apply {
-                        close()
-                    }
-                }
-                PowerReportManager.refresh()
+                interrupt.join()
+                closeRuntimeResources()
+                runCatching { PowerReportManager.refresh() }
                 Settings.startedByUser = false
                 withContext(Dispatchers.Main) {
                     RuntimeProfileState.clear()
@@ -456,6 +486,25 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                 }
             }
         }
+    }
+
+    private fun closeTun() {
+        val descriptor = fileDescriptor
+        fileDescriptor = null
+        runCatching { descriptor?.close() }.onFailure { Log.w(TAG, "TUN close failed") }
+    }
+
+    private suspend fun closeRuntimeResources() {
+        closeTun()
+        runCatching { DefaultNetworkMonitor.stop() }.onFailure { Log.w(TAG, "Network monitor stop failed") }
+        closeCommandServer()
+    }
+
+    private fun closeCommandServer() {
+        if (!commandServerRunning) return
+        commandServerRunning = false
+        runCatching { closeService() }
+        runCatching { commandServer.close() }
     }
 
     private fun closeService() {
@@ -471,17 +520,10 @@ class BoxService(private val service: Service, private val platformInterface: Pl
      * Does not broadcast a user-facing Alert (expected under rapid switch / timeout).
      */
     private suspend fun quietStopAfterStaleStart() {
+        // A Stop already owns teardown and final Stopped publication under lifecycleMutex.
+        if (withContext(Dispatchers.Main) { status.value == Status.Stopping }) return
         Settings.startedByUser = false
-        val pfd = fileDescriptor
-        if (pfd != null) {
-            pfd.close()
-            fileDescriptor = null
-        }
-        DefaultNetworkMonitor.stop()
-        if (::commandServer.isInitialized) {
-            closeService()
-            runCatching { commandServer.close() }
-        }
+        closeRuntimeResources()
         withContext(Dispatchers.Main) {
             if (receiverRegistered) {
                 service.unregisterReceiver(receiver)
@@ -496,16 +538,7 @@ class BoxService(private val service: Service, private val platformInterface: Pl
 
     private suspend fun stopAndAlert(type: Alert, message: String? = null) {
         Settings.startedByUser = false
-        val pfd = fileDescriptor
-        if (pfd != null) {
-            pfd.close()
-            fileDescriptor = null
-        }
-        DefaultNetworkMonitor.stop()
-        if (::commandServer.isInitialized) {
-            closeService()
-            commandServer.close()
-        }
+        closeRuntimeResources()
         withContext(Dispatchers.Main) {
             if (receiverRegistered) {
                 service.unregisterReceiver(receiver)
@@ -545,7 +578,7 @@ class BoxService(private val service: Service, private val platformInterface: Pl
         val intentTarget = intent?.getLongExtra(EXTRA_TARGET_PROFILE_ID, -1L) ?: -1L
         val intentSwitch = intent?.getLongExtra(EXTRA_SWITCH_REQUEST_ID, -1L) ?: -1L
 
-        GlobalScope.launch(Dispatchers.IO) {
+        startJob = GlobalScope.launch(Dispatchers.IO) {
             lifecycleMutex.withLock {
                 Settings.startedByUser = true
                 val requestId =
@@ -579,10 +612,15 @@ class BoxService(private val service: Service, private val platformInterface: Pl
     internal fun onBind(): IBinder = binder
 
     internal fun onDestroy() {
+        if (status.value != Status.Stopped && status.value != Status.Stopping) {
+            RuntimeProfileState.requestUserStop()
+            stopService()
+        }
         binder.close()
     }
 
     internal fun onRevoke() {
+        RuntimeProfileState.requestUserStop()
         stopService()
     }
 

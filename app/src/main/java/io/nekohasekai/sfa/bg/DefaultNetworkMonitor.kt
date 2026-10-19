@@ -18,23 +18,34 @@ object DefaultNetworkMonitor {
     @Volatile var defaultNetwork: Network? = null
     private var listener: InterfaceUpdateListener? = null
     private var generation = 0L
+    private var listenerGeneration = 0L
+    private var monitorGeneration = 0L
+    private var acceptingListeners = false
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var checkJob: Job? = null
 
     suspend fun start() {
-        DefaultNetworkListener.start(this) {
-            defaultNetwork = it
-            checkDefaultInterfaceUpdate(it)
+        val token = synchronized(this) { acceptingListeners = true; ++monitorGeneration }
+        DefaultNetworkListener.start(this) update@{ network ->
+            synchronized(this) {
+                if (monitorGeneration != token) return@update
+                defaultNetwork = network
+                checkDefaultInterfaceUpdate(network)
+            }
         }
-        defaultNetwork = withTimeout(10000L) { DefaultNetworkListener.get() }
-        checkDefaultInterfaceUpdate(defaultNetwork)
+        // The listener owns the live snapshot. An awaited result may already have been lost.
+        withTimeout(10000L) { DefaultNetworkListener.get() }
+        synchronized(this) {
+            if (monitorGeneration == token) checkDefaultInterfaceUpdate(defaultNetwork)
+        }
     }
 
     suspend fun stop() {
-        setListener(null)
-        defaultNetwork = null
+        synchronized(this) { monitorGeneration++ }
+        cancelPendingRegistration()
         DefaultNetworkListener.stop(this)
+        defaultNetwork = null
     }
 
     suspend fun require(): Network {
@@ -45,18 +56,33 @@ object DefaultNetworkMonitor {
         return DefaultNetworkListener.get()
     }
 
-    @Synchronized
+    fun cancelPendingRegistration() {
+        synchronized(this) { acceptingListeners = false }
+        setListener(null)
+    }
+
     fun setListener(listener: InterfaceUpdateListener?) {
-        generation++
-        checkJob?.cancel()
-        checkJob = null
-        this.listener = listener
+        val token = synchronized(this) {
+            if (listener != null && !acceptingListeners) throw kotlinx.coroutines.CancellationException("Network monitor is stopping")
+            generation++
+            checkJob?.cancel()
+            checkJob = null
+            this.listener = listener
+            ++listenerGeneration
+        }
         if (listener != null) {
-            // Must finish before native startup downloads remote rule-sets or resolves DNS.
-            // Resolve the latest network on each attempt: onAvailable can precede link properties.
+            // Poll outside the monitor lock: network callbacks must be able to publish replacements.
             publishInitialInterface(
-                resolve = { defaultNetwork?.let(::interfaceSnapshot) },
-                publish = { (name, index) -> listener.updateDefaultInterface(name, index, false, false) },
+                resolve = { defaultNetwork?.let { network -> interfaceSnapshot(network)?.let { Triple(network, it.first, it.second) } } },
+                isCurrent = { synchronized(this) { listenerGeneration == token && this.listener === listener } },
+                publish = { (network, name, index) ->
+                    synchronized(this) {
+                        if (listenerGeneration == token && this.listener === listener && defaultNetwork == network) {
+                            listener.updateDefaultInterface(name, index, false, false)
+                            true
+                        } else false
+                    }
+                },
             )
         }
     }

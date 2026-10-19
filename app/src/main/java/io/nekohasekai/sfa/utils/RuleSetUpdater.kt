@@ -3,14 +3,15 @@ package io.nekohasekai.sfa.utils
 import android.content.Context
 import android.util.Log
 import io.nekohasekai.libbox.Libbox
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 object RuleSetUpdater {
     private const val TAG = "RuleSetUpdater"
@@ -39,7 +40,7 @@ object RuleSetUpdater {
                         if (urlString.isNotEmpty()) {
                             val tag = ruleSet.optString("tag")
                             val format = ruleSet.optString("format", "binary")
-                            val safeTag = tag.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                            val safeTag = tag.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80).ifBlank { "rule-set" }
                             val hash =
                                 java.security.MessageDigest.getInstance("SHA-256")
                                     .digest(urlString.toByteArray())
@@ -50,10 +51,16 @@ object RuleSetUpdater {
                             val file = File(dir, fileName)
                             // Whitelist must be usable on a fresh install even when GitHub
                             // is unreachable on the current restricted mobile network.
-                            if (!file.exists() && tag in RoutingPresets.remoteRuleSets) {
-                                context.assets.open("rule_sets/$tag.srs").use { input ->
-                                    file.outputStream().use { input.copyTo(it) }
-                                }
+                            if (!file.exists() && format == "binary" && RoutingPresets.remoteRuleSets[tag] == urlString) {
+                                val operation = currentCoroutineContext()
+                                RuleSetFileCommit.replace(file, write = { temporary ->
+                                    context.assets.open("rule_sets/$tag.srs").use { input ->
+                                        FileOutputStream(temporary).use { output -> input.copyTo(output); output.fd.sync() }
+                                    }
+                                }, validate = { temporary ->
+                                    operation.ensureActive()
+                                    validateRuleSet(temporary, format)
+                                })
                             }
 
                             var shouldDownload = true
@@ -82,73 +89,60 @@ object RuleSetUpdater {
                     }
                 }
                 root.toString()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to process rule sets", e)
+                Log.e(TAG, "Failed to process rule sets")
                 throw IllegalArgumentException(
-                    "Не удалось подготовить наборы правил: ${e.message}",
+                    "Не удалось подготовить наборы правил",
                     e,
                 )
             }
         }
     }
 
-    private fun downloadFile(urlString: String, destFile: File, format: String) {
-        Log.i(TAG, "Downloading rule-set from $urlString")
-        var connection: HttpURLConnection? = null
-        try {
-            val url = URL(urlString)
-            connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
+    private fun validateRuleSet(file: File, format: String) {
+        Libbox.checkConfig(
+            JSONObject().put("route", JSONObject().put("rule_set", JSONArray().put(
+                JSONObject().put("type", "local").put("tag", "validate-update")
+                    .put("format", format).put("path", file.absolutePath),
+            ))).toString(),
+        )
+    }
 
-            val responseCode = connection.responseCode
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val tempFile = File(destFile.parentFile, destFile.name + ".tmp")
-                connection.inputStream.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var total = 0
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            total += count
-                            require(total <= 16 * 1024 * 1024) { "Rule-set exceeds 16 MiB" }
-                            output.write(buffer, 0, count)
-                        }
-                    }
+    private suspend fun downloadFile(urlString: String, destFile: File, format: String): Unit {
+        val operation = currentCoroutineContext()
+        val client = Libbox.newHTTPClient().apply { modernTLS(); setTimeout(30) }
+        try {
+            withCancellationClose(client::close) {
+                val request = client.newRequest().apply {
+                    setURL(urlString)
+                    setUserAgent("notemp")
+                    setResponseLimit(16L * 1024 * 1024)
                 }
-                Libbox.checkConfig(
-                    JSONObject()
-                        .put(
-                            "route",
-                            JSONObject()
-                                .put(
-                                    "rule_set",
-                                    JSONArray()
-                                        .put(
-                                            JSONObject()
-                                                .put("type", "local")
-                                                .put("tag", "validate-update")
-                                                .put("format", format)
-                                                .put("path", tempFile.absolutePath),
-                                        ),
-                                ),
-                        )
-                        .toString(),
+                val response = request.execute()
+                operation.ensureActive()
+                RuleSetFileCommit.replace(
+                    destFile,
+                    write = { temporary ->
+                        response.writeTo(temporary.absolutePath)
+                        operation.ensureActive()
+                        FileOutputStream(temporary, true).use { it.fd.sync() }
+                    },
+                    validate = { temporary ->
+                        operation.ensureActive()
+                        validateRuleSet(temporary, format)
+                        operation.ensureActive()
+                    },
                 )
-                if (tempFile.renameTo(destFile)) {
-                    Log.i(TAG, "Successfully downloaded to ${destFile.absolutePath}")
-                } else {
-                    Log.e(TAG, "Failed to rename temp file for ${destFile.name}")
-                }
-            } else {
-                Log.e(TAG, "HTTP error $responseCode downloading $urlString")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error downloading $urlString", e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            operation.ensureActive()
+            Log.w(TAG, "Rule-set download failed; previous cache retained")
         } finally {
-            connection?.disconnect()
+            client.close()
         }
     }
 }

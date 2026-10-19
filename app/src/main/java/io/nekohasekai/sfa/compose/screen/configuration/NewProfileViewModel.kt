@@ -281,7 +281,7 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
                                     File(Uri.parse(sourceURL).path!!).readText()
                                 }
                                 sourceURL.startsWith("http://") || sourceURL.startsWith("https://") -> {
-                                    HTTPClient().use { it.getSubscription(sourceURL) }.also { importReport = it.report }.config
+                                    HTTPClient().use { it.fetchSubscription(sourceURL) }.also { importReport = it.report }.config
                                 }
                                 ProxyLinkParser.isShareLink(sourceURL) -> {
                                     ProfileContentDecoder.decodeWithReport(sourceURL.toByteArray(Charsets.UTF_8)).also { importReport = it.report }.content.config
@@ -331,7 +331,7 @@ class NewProfileViewModel(application: Application) : AndroidViewModel(applicati
         typedProfile.path = configFile.path
 
         // Fetch initial config - this MUST succeed for remote profiles
-        val result = HTTPClient().use { it.getSubscription(state.remoteUrl) }
+        val result = HTTPClient().use { it.fetchSubscription(state.remoteUrl) }
         val content = result.config
         Libbox.checkConfig(content)
         val configContent = content

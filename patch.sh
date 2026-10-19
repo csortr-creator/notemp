@@ -206,6 +206,15 @@ else
     git -C sing-box-core apply "$PWD/$SUBSCRIPTION_HTTP_BOUNDS_PATCH"
 fi
 
+# Apply opt-in response limits to streamed rule-set files as well as buffered imports.
+HTTP_STREAM_BOUNDS_PATCH=patches/sing-box-1.14.2-http-stream-bounds.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$HTTP_STREAM_BOUNDS_PATCH" 2>/dev/null; then
+    echo "HTTP stream bounds patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$HTTP_STREAM_BOUNDS_PATCH"
+    git -C sing-box-core apply "$PWD/$HTTP_STREAM_BOUNDS_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

@@ -284,7 +284,7 @@ class ProfileImportHandler(private val context: Context) {
         val fileID = ProfileManager.nextFileID()
         val configDirectory = File(context.filesDir, "configs").also { it.mkdirs() }
         val configFile = File(configDirectory, "$fileID.json")
-        val result = io.nekohasekai.sfa.utils.HTTPClient().use { it.getSubscription(url) }
+        val result = io.nekohasekai.sfa.utils.HTTPClient().use { it.fetchSubscription(url) }
         Libbox.checkConfig(result.config)
         profile.name = result.profileName ?: name
         result.updateIntervalMinutes?.let { typedProfile.autoUpdateInterval = it }

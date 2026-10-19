@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +152,65 @@ func TestSFASubscriptionHTTPRedirectKeepsLimit(t *testing.T) {
 	_, err = response.GetContent()
 	if err == nil || !strings.Contains(err.Error(), "HTTP_RESPONSE_TOO_LARGE") {
 		t.Fatalf("redirect lost limit: %v", err)
+	}
+}
+
+func TestSFASubscriptionHTTPStreamLimit(t *testing.T) {
+	for _, length := range []int64{-1, 128} {
+		body := &sfaCountedBody{}
+		response := &httpResponse{Response: &http.Response{Body: body, ContentLength: length}, responseLimit: 64}
+		path := filepath.Join(t.TempDir(), "cache")
+		err := response.WriteTo(path)
+		if err == nil || !strings.Contains(err.Error(), "HTTP_RESPONSE_TOO_LARGE") {
+			t.Fatalf("expected stream limit: %v", err)
+		}
+		if !body.closed || body.read > 65 {
+			t.Fatalf("unbounded stream: %+v", body)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Size() > 65 {
+			t.Fatalf("oversized file: %v", err)
+		}
+	}
+	response := &httpResponse{Response: &http.Response{Body: io.NopCloser(strings.NewReader("unlimited")), ContentLength: 9}}
+	path := filepath.Join(t.TempDir(), "unlimited")
+	if err := response.WriteTo(path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "unlimited" {
+		t.Fatalf("changed default stream behavior: %v", err)
+	}
+}
+
+func TestSFASubscriptionHTTPCloseCancelsFileCopy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client := NewHTTPClient()
+	defer client.Close()
+	req := client.NewRequest()
+	req.SetResponseLimit(64)
+	if err := req.SetURL(server.URL); err != nil {
+		t.Fatal(err)
+	}
+	response, err := req.Execute()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	path := filepath.Join(t.TempDir(), "cancelled")
+	go func() { done <- response.WriteTo(path) }()
+	client.Close()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("closed file copy succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel file copy")
 	}
 }

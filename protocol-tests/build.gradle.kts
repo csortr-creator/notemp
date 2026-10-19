@@ -15,6 +15,7 @@ dependencies {
 sourceSets.main {
     kotlin.srcDir("../app/src/main/java")
     kotlin.include("io/nekohasekai/sfa/utils/ParallelTasks.kt")
+    kotlin.include("io/nekohasekai/sfa/utils/CancellableResource.kt")
     kotlin.include("io/nekohasekai/sfa/utils/SubscriptionMetadata.kt")
     kotlin.include("io/nekohasekai/sfa/utils/NotificationTitle.kt")
     kotlin.include("io/nekohasekai/sfa/utils/NotificationUpdateGate.kt")
@@ -42,6 +43,7 @@ sourceSets.main {
     kotlin.include("io/nekohasekai/sfa/utils/PartialUpdatePolicy.kt")
     kotlin.include("io/nekohasekai/sfa/utils/ImportConfirmationQueue.kt")
     kotlin.include("io/nekohasekai/sfa/bg/RuntimeProfileState.kt")
+    kotlin.include("io/nekohasekai/sfa/bg/NetworkListenerState.kt")
     kotlin.include("io/nekohasekai/sfa/bg/ProfileSelectionQueue.kt")
     kotlin.include("io/nekohasekai/sfa/bg/SwitchStartResolver.kt")
     kotlin.include("io/nekohasekai/sfa/utils/SubscriptionImportReport.kt")
@@ -53,9 +55,26 @@ sourceSets.main {
     kotlin.include("io/nekohasekai/sfa/utils/UserRoutingConfig.kt")
     kotlin.include("io/nekohasekai/sfa/utils/RoutingPresets.kt")
     kotlin.include("io/nekohasekai/sfa/utils/RuleSetPolicy.kt")
+    kotlin.include("io/nekohasekai/sfa/utils/RuleSetFileCommit.kt")
     kotlin.include("io/nekohasekai/sfa/models/DnsConfig.kt")
     kotlin.include("io/nekohasekai/sfa/models/GeoFileSource.kt")
     kotlin.include("io/nekohasekai/sfa/models/RoutingRule.kt")
 }
 
 tasks.test { useJUnit() }
+
+// Compile production adapters against a deterministic OS/JNI surface, confined to JVM tests.
+val syncPlatformAdapterSources by tasks.registering(Sync::class) {
+    from("../app/src/main/java") {
+        include("io/nekohasekai/sfa/bg/DefaultNetworkListener.kt")
+        include("io/nekohasekai/sfa/bg/DefaultNetworkMonitor.kt")
+        include("io/nekohasekai/sfa/utils/RuleSetUpdater.kt")
+        include("io/nekohasekai/sfa/utils/OfflineOutboundProbe.kt")
+    }
+    into(layout.buildDirectory.dir("platform-adapter-sources"))
+}
+sourceSets.test {
+    kotlin.srcDir("platform-stubs")
+    kotlin.srcDir(layout.buildDirectory.dir("platform-adapter-sources"))
+}
+tasks.named("compileTestKotlin") { dependsOn(syncPlatformAdapterSources) }

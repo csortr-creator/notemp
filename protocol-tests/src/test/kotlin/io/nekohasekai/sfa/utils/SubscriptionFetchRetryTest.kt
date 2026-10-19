@@ -157,4 +157,19 @@ class SubscriptionFetchRetryTest {
         assertEquals(1, calls)
     }
 
+    @Test fun cancelledOperationDoesNotRetryAConnectionErrorFromClosingClient() {
+        var cancelled = false
+        var logged = false
+        try {
+            SubscriptionFetchRetry.run(sleep = { fail("Must not back off") },
+                onAttempt = { _, _, _ -> logged = true },
+                checkActive = { if (cancelled) throw java.util.concurrent.CancellationException() }) {
+                cancelled = true
+                throw java.io.IOException("connection reset by peer")
+            }
+            fail("Expected cancellation")
+        } catch (_: java.util.concurrent.CancellationException) { }
+        assertFalse(logged)
+    }
+
 }

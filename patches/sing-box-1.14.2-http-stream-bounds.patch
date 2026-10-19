@@ -1,0 +1,52 @@
+--- a/experimental/libbox/http.go
++++ b/experimental/libbox/http.go
+@@ -228,7 +228,7 @@
+ 	r.SetContent([]byte(content))
+ }
+ 
+-// SetResponseLimit applies to GetContent only; streaming downloads keep their existing behavior.
++// SetResponseLimit applies to buffered reads and streamed file copies. Unset limits remain unlimited.
+ // Zero leaves the response unlimited. Bound the optional limit to avoid overflow in limit+1.
+ func (r *httpRequest) SetResponseLimit(bytes int64) {
+ 	r.responseLimit = max(0, min(bytes, 1<<30))
+@@ -297,7 +297,7 @@
+ 		return err
+ 	}
+ 	defer file.Close()
+-	return common.Error(bufio.Copy(file, h.Body))
++	return h.copyBody(file)
+ }
+ 
+ func (h *httpResponse) WriteToWithProgress(path string, handler HTTPResponseWriteToProgressHandler) error {
+@@ -307,11 +307,29 @@
+ 		return err
+ 	}
+ 	defer file.Close()
+-	return common.Error(bufio.Copy(&progressWriter{
++	return h.copyBody(&progressWriter{
+ 		writer:  file,
+ 		handler: handler,
+ 		total:   h.ContentLength,
+-	}, h.Body))
++	})
++}
++
++func (h *httpResponse) copyBody(writer io.Writer) error {
++	var reader io.Reader = h.Body
++	if h.responseLimit > 0 {
++		if h.ContentLength > h.responseLimit {
++			return E.New("HTTP_RESPONSE_TOO_LARGE")
++		}
++		reader = io.LimitReader(h.Body, h.responseLimit+1)
++	}
++	written, err := bufio.Copy(writer, reader)
++	if err != nil {
++		return err
++	}
++	if h.responseLimit > 0 && written > h.responseLimit {
++		return E.New("HTTP_RESPONSE_TOO_LARGE")
++	}
++	return nil
+ }
+ 
+ type progressWriter struct {

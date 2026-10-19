@@ -55,4 +55,13 @@ class ExternalStopTest {
         assertTrue(queue.runIfCurrent(active) {})
         queue.complete(active)
     }
+    @Test fun stoppedGenerationCannotBeReusedAsAnUntaggedStart() {
+        RuntimeProfileState.clear()
+        val id = RuntimeProfileState.nextSwitchRequestId()
+        assertTrue(RuntimeProfileState.beginStart(id, 51))
+        RuntimeProfileState.requestUserStop()
+        assertFalse(RuntimeProfileState.beginStart(RuntimeProfileState.currentSwitchRequestId(), 51))
+        RuntimeProfileState.clear()
+    }
+
 }

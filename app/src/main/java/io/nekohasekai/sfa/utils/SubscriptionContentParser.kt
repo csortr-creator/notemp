@@ -9,6 +9,7 @@ import java.util.Base64
 internal class SubscriptionContentParser(
     private val tunStack: String = "system",
     private val blockIpv6: Boolean = true,
+    private val checkActive: () -> Unit = {},
     private val validateNode: (JSONObject) -> Unit = {},
 ) {
     /** Unknown optional share-link keys for one parse (A+ tolerant mode). */
@@ -43,6 +44,7 @@ internal class SubscriptionContentParser(
     }
 
     fun parse(raw: String): SubscriptionImportResult {
+        checkActive()
         if (raw.length > MAX_BYTES || raw.toByteArray(StandardCharsets.UTF_8).size > MAX_BYTES) throw SubscriptionResponseFailure(SubscriptionResponseProblem.TOO_LARGE)
         val trimmed = normalizeText(raw)
         val mode = SubscriptionRouting.detectMode(trimmed)
@@ -78,6 +80,7 @@ internal class SubscriptionContentParser(
         val issues = mutableListOf<SubscriptionImportIssue>()
         var received = 0
         fun accept(line: Int, name: String, independent: Boolean = true, parseNode: () -> JSONObject) {
+            checkActive()
             received++
             val node =
                 try {
@@ -933,6 +936,7 @@ internal class SubscriptionContentParser(
         val whitelistProxyTags = mutableListOf<String>()
 
         for (node in validNodes) {
+            checkActive()
             if (!node.has("multiplex")) {
                 applyMultiplex(node, source = node)
             }

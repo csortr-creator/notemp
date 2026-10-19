@@ -14,6 +14,7 @@ import java.net.NetworkInterface
 
 class OfflineProbePlatform : PlatformInterfaceWrapper {
     @Volatile private var network: Network? = null
+    @Volatile private var generation = 0L
 
     // The isolated probe has no services or TUN and does not publish notifications.
     override fun sendNotification(notification: io.nekohasekai.libbox.Notification) = Unit
@@ -21,13 +22,34 @@ class OfflineProbePlatform : PlatformInterfaceWrapper {
     override fun cancelNotification(identifier: String, typeID: Int) = Unit
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
+        val token = synchronized(this) { ++generation }
         runBlocking(Dispatchers.IO) {
             DefaultNetworkListener.start(this@OfflineProbePlatform) { current ->
-                publishNetwork(current, listener)
+                synchronized(this@OfflineProbePlatform) {
+                    if (generation == token) publishNetwork(current, listener)
+                }
             }
             // Do not return to native Box.Start with an uninitialised default interface.
             // Get is processed after Start and awaits the first network callback.
-            publishNetwork(awaitProbeNetwork({ network }, { DefaultNetworkListener.get() }), listener)
+            awaitProbeNetwork({ network }, { DefaultNetworkListener.get() })
+            publishInitialInterface(
+                resolve = {
+                    network?.let { current ->
+                        val name = Application.connectivity.getLinkProperties(current)?.interfaceName
+                        val index = name?.let { runCatching { NetworkInterface.getByName(it)?.index }.getOrNull() }
+                        if (name != null && index != null && index > 0) Triple(current, name, index) else null
+                    }
+                },
+                isCurrent = { generation == token },
+                publish = { (current, name, index) ->
+                    synchronized(this@OfflineProbePlatform) {
+                        if (generation != token || network != current) false else {
+                            listener.updateDefaultInterface(name, index, false, false)
+                            true
+                        }
+                    }
+                },
+            )
         }
     }
 
@@ -43,6 +65,7 @@ class OfflineProbePlatform : PlatformInterfaceWrapper {
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
+        synchronized(this) { generation++; network = null }
         runBlocking(Dispatchers.IO) { DefaultNetworkListener.stop(this@OfflineProbePlatform) }
     }
 

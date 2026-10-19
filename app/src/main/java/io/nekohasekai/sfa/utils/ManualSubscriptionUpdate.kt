@@ -49,7 +49,7 @@ object ManualSubscriptionUpdate {
         val hadPrevious = ImportResultFormatter.configFileExists(profile.typed.path)
         return try {
             val expected = ProfileConfigCommit.beginUpdate(profile.id, profile.typed.path)
-            val result = HTTPClient().use { it.getSubscription(remoteURL) }
+            val result = HTTPClient().use { it.fetchSubscription(remoteURL) }
             if (!ProfileConfigCommit.isCurrent(profile.id, requireNotNull(expected.operationToken))) {
                 return ManualPrepareResult.Rejected(ImportOperationOutcome.KEPT_LKG, "STALE: начато более новое обновление", result.report)
             }

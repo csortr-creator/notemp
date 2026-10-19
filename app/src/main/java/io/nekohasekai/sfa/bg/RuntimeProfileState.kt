@@ -49,7 +49,29 @@ object RuntimeProfileState {
     fun currentSwitchRequestId(): Long = switchIds.get()
 
     @Synchronized
-    fun isStartCurrent(requestId: Long, profileId: Long): Boolean = requestId == currentSwitchRequestId() && profileId !in deletingProfileIds
+    fun isStartCurrent(requestId: Long, profileId: Long): Boolean = requestId == currentSwitchRequestId() &&
+        (userStopId == 0L || requestId > userStopId) && profileId !in deletingProfileIds
+
+    data class ReloadTicket(val requestId: Long, val profileId: Long)
+
+    /** Capture before waiting/preparing; a completed reload cannot adopt a later Stop generation. */
+    @Synchronized
+    fun captureReload(profileId: Long): ReloadTicket? {
+        val requestId = currentSwitchRequestId()
+        if (loadedProfileId != profileId || startingProfileId != -1L || !isStartCurrent(requestId, profileId)) return null
+        return ReloadTicket(requestId, profileId)
+    }
+
+    @Synchronized
+    fun isReloadCurrent(ticket: ReloadTicket): Boolean =
+        isStartCurrent(ticket.requestId, ticket.profileId) && loadedProfileId == ticket.profileId
+
+    @Synchronized
+    fun tryMarkReloaded(ticket: ReloadTicket, runtimeConfig: String): Boolean {
+        if (!isReloadCurrent(ticket)) return false
+        markLoaded(ticket.profileId, runtimeConfig)
+        return true
+    }
 
     /** Register the target before reading its configuration or starting the native service. */
     @Synchronized

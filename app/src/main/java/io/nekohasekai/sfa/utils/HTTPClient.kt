@@ -7,6 +7,8 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.sfa.ktx.unwrap
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.io.Closeable
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -16,11 +18,16 @@ import java.util.concurrent.ConcurrentHashMap
 private val hwidMemoryCache = ConcurrentHashMap<String, String>()
 
 class HTTPClient : Closeable {
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var nativeClient: io.nekohasekai.libbox.HTTPClient? = null
 
     private val clientDelegate = lazy {
         Libbox.newHTTPClient().apply {
             modernTLS()
             setTimeout(30)
+        }.also { created ->
+            nativeClient = created
+            if (closed.get()) created.close()
         }
     }
     private val client by clientDelegate
@@ -31,10 +38,16 @@ class HTTPClient : Closeable {
         return result.config
     }
 
-    internal fun getSubscription(url: String): SubscriptionImportResult {
-        val response = SubscriptionDiagnostics.at(SubscriptionStage.FETCH) { executeFetch(url) }
+    internal suspend fun fetchSubscription(url: String): SubscriptionImportResult =
+        withCancellationClose(::close) {
+            val operation = currentCoroutineContext()
+            getSubscription(url) { operation.ensureActive() }
+        }
+
+    internal fun getSubscription(url: String, checkActive: () -> Unit = {}): SubscriptionImportResult {
+        val response = SubscriptionDiagnostics.at(SubscriptionStage.FETCH) { executeFetch(url, checkActive) }
         val parsed = SubscriptionDiagnostics.at(SubscriptionStage.PARSE) {
-            parseSubscription(response.content)
+            parseSubscription(response.content, checkActive)
         }
         return SubscriptionDiagnostics.at(SubscriptionStage.METADATA) {
             parsed.copy(
@@ -53,7 +66,17 @@ class HTTPClient : Closeable {
      * The whole HTTP exchange is limited to 30 seconds per attempt, including body reads.
      * Native response reads are bounded before allocation; transient failures use [SubscriptionFetchRetry].
      */
-    private fun executeFetch(url: String) = SubscriptionFetchRetry.run(
+    private fun executeFetch(url: String, checkActive: () -> Unit) = SubscriptionFetchRetry.run(
+        checkActive = checkActive,
+        sleep = { duration ->
+            var remaining = duration
+            while (remaining > 0L) {
+                checkActive()
+                val slice = minOf(remaining, 50L)
+                Thread.sleep(slice)
+                remaining -= slice
+            }
+        },
         onAttempt = { attempt, code, willRetry ->
             Log.i(
                 FETCH_TAG,
@@ -178,12 +201,13 @@ class HTTPClient : Closeable {
      * (NodeCoreHarness + family control). Old minimal dns-direct-only scaffold removed.
      * Final [Libbox.checkConfig] remains at commit time ([ProfileConfigCommit]).
      */
-    internal fun parseSubscription(raw: String): SubscriptionImportResult {
+    internal fun parseSubscription(raw: String, checkActive: () -> Unit = {}): SubscriptionImportResult {
         NodeCoreValidator.beginBatch()
         try {
             return SubscriptionContentParser(
                 io.nekohasekai.sfa.database.Settings.tunStack,
                 io.nekohasekai.sfa.database.Settings.routingBlockIpv6,
+                checkActive = checkActive,
                 validateNode = { node -> NodeCoreValidator.validateOrThrow(node) },
             )
                 .parse(raw)
@@ -193,7 +217,8 @@ class HTTPClient : Closeable {
     }
 
     override fun close() {
-        if (clientDelegate.isInitialized()) client.close()
+        closed.set(true)
+        nativeClient?.close()
     }
 
     companion object {
