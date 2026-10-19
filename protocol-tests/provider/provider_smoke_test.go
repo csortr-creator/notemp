@@ -46,6 +46,7 @@ type providerNode struct {
 	Mode      string `json:"mode"`
 	Path      string `json:"path"`
 	Padding   string `json:"padding"`
+	DialIP    string `json:"-"`
 }
 
 // Opt-in remote diagnosis, never part of a release or a default test run.
@@ -87,6 +88,15 @@ func TestSFAProviderSmoke(t *testing.T) {
 		t.Fatal("reference fixture missing")
 	}
 	for index, node := range nodes {
+		// Pin both engines to the same IPv4 endpoint. Otherwise resolver order
+		// can compare an IPv6 backend with a different IPv4 backend.
+		lookupCtx, stopLookup := context.WithTimeout(context.Background(), 10*time.Second)
+		addresses, lookupErr := net.DefaultResolver.LookupNetIP(lookupCtx, "ip4", node.Server)
+		stopLookup()
+		if lookupErr != nil || len(addresses) == 0 {
+			t.Fatal("cannot resolve diagnostic endpoint")
+		}
+		node.DialIP = addresses[0].String()
 		for _, target := range []struct{ address, path string }{
 			{"www.gstatic.com:443", "/generate_204"},
 			{"example.com:443", "/"},
@@ -98,7 +108,7 @@ func TestSFAProviderSmoke(t *testing.T) {
 					cancel()
 					t.Logf("SFA_PROVIDER_RESULT node=%d engine=%s fp=%s target=%s stage=%s code=%s", index, engine, fp, target.address, stage, providerErrorCode(err))
 					if err != nil && reportKey != nil {
-						report, encryptErr := providerEncryptedError(err, nodes, reportKey)
+						report, encryptErr := providerEncryptedError(err, append(nodes, node), reportKey)
 						if encryptErr != nil {
 							t.Fatal("cannot encrypt diagnostic report")
 						}
@@ -113,7 +123,7 @@ func TestSFAProviderSmoke(t *testing.T) {
 func providerEncryptedError(err error, nodes []providerNode, publicKey *[32]byte) (string, error) {
 	message := err.Error()
 	for _, n := range nodes {
-		for _, value := range []string{n.UUID, n.PublicKey, n.ShortID, n.Server, n.SNI, n.Path} {
+		for _, value := range []string{n.UUID, n.PublicKey, n.ShortID, n.Server, n.SNI, n.Path, n.DialIP} {
 			if value != "" && value != "/" {
 				message = strings.ReplaceAll(message, value, "[redacted]")
 			}
@@ -187,6 +197,9 @@ func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine
 	// accepts only IPs; resolve the physical endpoint through the runner's
 	// resolver, as reference Xray does. Preserve the original TLS SNI/authority.
 	d := providerResolvingDialer{Dialer: rawDialer, lookup: func(ctx context.Context, host string) ([]netip.Addr, error) {
+		if host == n.Server && n.DialIP != "" {
+			return []netip.Addr{netip.MustParseAddr(n.DialIP)}, nil
+		}
 		return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	}}
 	var conn net.Conn
@@ -352,9 +365,13 @@ func providerXray(ctx context.Context, t *testing.T, n providerNode, fp, binary 
 		}
 		stream["xhttpSettings"] = x
 	}
+	address := n.Server
+	if n.DialIP != "" {
+		address = n.DialIP
+	}
 	config := map[string]any{"log": map[string]any{"loglevel": "none"},
 		"inbounds":  []any{map[string]any{"listen": "127.0.0.1", "port": port, "protocol": "socks", "settings": map[string]any{"udp": false}}},
-		"outbounds": []any{map[string]any{"protocol": "vless", "settings": map[string]any{"vnext": []any{map[string]any{"address": n.Server, "port": n.Port, "users": []any{map[string]any{"id": n.UUID, "encryption": "none"}}}}}, "streamSettings": stream}},
+		"outbounds": []any{map[string]any{"protocol": "vless", "settings": map[string]any{"vnext": []any{map[string]any{"address": address, "port": n.Port, "users": []any{map[string]any{"id": n.UUID, "encryption": "none"}}}}}, "streamSettings": stream}},
 	}
 	data, err := json.Marshal(config)
 	if err != nil {

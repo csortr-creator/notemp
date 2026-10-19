@@ -7,6 +7,10 @@ on:
         description: Temporary encrypted diagnostic input secret
         required: true
         type: string
+      compare_client_version:
+        description: Also test the reference client's Reality version (diagnostic only)
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -53,3 +57,21 @@ jobs:
           cp protocol-tests/provider/provider_smoke_test.go sing-box-core/common/tls/
           cd sing-box-core
           go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProvider(Smoke|ReportRedaction|DomainDialer)$' -v
+      - name: Diagnose Reality version policy without changing production
+        if: ${{ inputs.compare_client_version }}
+        env:
+          SFA_PROVIDER_PROBE: ${{ secrets[inputs.secret_name] }}
+          SFA_PROVIDER_XRAY: /tmp/xray/xray
+          GOTOOLCHAIN: local
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('sing-box-core/common/tls/reality_client.go')
+          text = path.read_text()
+          old = 'hello.SessionId[1] = 3\n\thello.SessionId[2] = 27'
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, 'hello.SessionId[1] = 9\n\thello.SessionId[2] = 9'))
+          PY
+          echo 'SFA_PROVIDER_VARIANT reference-version-26.9.9 (diagnostic only)'
+          cd sing-box-core
+          go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProviderSmoke$' -v
