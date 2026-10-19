@@ -180,3 +180,25 @@ retain their existing scoped behavior. JVM tests exercise stale completion,
 active/pending cancellation without a UI callback, later selection, and internal
 switch preservation. Android startup/notification timing still requires device
 verification.
+
+
+### XHTTP authority with IP endpoints and TLS virtual hosts
+
+The XHTTP HTTP authority now follows Xray precedence: explicit `host`, then the
+TLS/Reality server name, then the dial address without its port. IPv6 literals
+are bracketed. This selection is performed independently for upload and separate
+download targets. The physical destination and TLS certificate checks are unchanged.
+
+Previously, an IP endpoint with a separate TLS server name and an empty `host`
+sent `IP:port` as HTTP authority. This is incompatible with strict virtual hosts.
+`TestSFAXHTTPVirtualHost` reproduces HTTP 421 before the patch, while an explicit
+Host override succeeds. After the patch, generated certificates with certificate
+verification, Chrome/Firefox, auto/stream-up and explicit Host overrides all
+complete a payload roundtrip through an IP endpoint and strict virtual-host
+server. The new fixture tears down server streams before its HTTPS listener.
+
+Source: [Xray 26.9.9 XHTTP dialer](https://github.com/XTLS/Xray-core/blob/v26.9.9/transport/internet/splithttp/dialer.go),
+`Dial` and separate download URL construction. This defect matches the empty-Host,
+IP-endpoint configuration shown for GeodemaWL Cobalt/Lead, but provider availability
+still needs device verification. Reality-over-TCP authentication failures (Magnetit)
+and Kequinq Reality/XHTTP handshake failures are separate open cases.

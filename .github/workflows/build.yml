@@ -196,9 +196,9 @@ jobs:
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
             ./common/tls -run '^TestSFAReality(XrayInterop|HybridOptionInterop|HybridClientHello|MinimumVersionInterop|ConfiguredClock)$' -count=3 -v
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
-            ./transport/v2rayxhttp -run '^TestSFAPanelRealityXHTTP$' -count=2 -v
+            ./transport/v2rayxhttp -run '^TestSFA(PanelRealityXHTTP|XHTTPVirtualHost)$' -count=2 -v
           XHTTP_XRAY_BINARY=/tmp/xray-modern/xray go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
-            ./transport/v2rayxhttp -run '^TestSFAPanelRealityXHTTP$' -count=2 -v
+            ./transport/v2rayxhttp -run '^TestSFA(PanelRealityXHTTP|XHTTPVirtualHost)$' -count=2 -v
           # sing-vmess Vision uses unsafe reflection incompatible with race checkptr.
           # Keep auth/plain under -race; run the actual Vision HTTPS exchange separately.
           go test -timeout 5m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \

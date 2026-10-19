@@ -1,0 +1,23 @@
+--- a/transport/v2rayxhttp/client.go
++++ b/transport/v2rayxhttp/client.go
+@@ -130,9 +130,17 @@
+ 			}
+ 		}
+ 	}
+-	host := serverAddr.String()
+-	if config.host != "" {
+-		host = config.host
++	// Xray precedence: explicit HTTP Host, TLS/Reality server name, dial address.
++	// The HTTP authority selects a virtual host; it is not the TCP destination.
++	host := config.host
++	if host == "" && tlsConfig != nil {
++		host = tlsConfig.ServerName()
++	}
++	if host == "" {
++		host = serverAddr.AddrString()
++	}
++	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
++		host = "[" + host + "]"
+ 	}
+ 	requestURLValue := config.requestURL(scheme, host)
+ 	requestURL := requestURLValue.String()

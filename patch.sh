@@ -143,6 +143,15 @@ else
     git -C sing-box-core apply "$PWD/$REALITY_CLOCK_PATCH"
 fi
 
+# Keep HTTP virtual-host authority separate from the TCP destination.
+XHTTP_AUTHORITY_PATCH=patches/sing-box-1.14.2-xhttp-authority.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$XHTTP_AUTHORITY_PATCH" 2>/dev/null; then
+    echo "XHTTP authority patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$XHTTP_AUTHORITY_PATCH"
+    git -C sing-box-core apply "$PWD/$XHTTP_AUTHORITY_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 
