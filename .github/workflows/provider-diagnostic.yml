@@ -1,0 +1,55 @@
+name: Private provider diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      secret_name:
+        description: Temporary encrypted diagnostic input secret
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Prepare pinned core
+        run: |
+          git clone --depth 1 --branch v1.14.2 https://github.com/SagerNet/sing-box.git sing-box-core
+          test "$(git -C sing-box-core rev-parse HEAD)" = af6e64c3b69e6132ebaee0e1a3d24e93903f6709
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sing-box-core/go.mod
+          cache: false
+      - name: Apply production compatibility patches
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess
+          root = pathlib.Path.cwd()
+          text = (root / 'scripts/validate.sh').read_text()
+          block = re.search(r'REQUIRED_CORE_PATCHES=\((.*?)\)', text, re.S).group(1)
+          for name in re.findall(r'sing-box-[\w.\-]+\.patch', block):
+              subprocess.run(['git', '-C', 'sing-box-core', 'apply', '--check', str(root / 'patches' / name)], check=True)
+              subprocess.run(['git', '-C', 'sing-box-core', 'apply', str(root / 'patches' / name)], check=True)
+          PY
+      - name: Prepare reference Xray
+        run: |
+          curl --fail --location --retry 3 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o /tmp/xray.zip
+          echo '1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df  /tmp/xray.zip' | sha256sum --check
+          mkdir -p /tmp/xray
+          unzip -q /tmp/xray.zip -d /tmp/xray
+      - name: Compare identical private provider settings
+        env:
+          SFA_PROVIDER_PROBE: ${{ secrets[inputs.secret_name] }}
+          SFA_PROVIDER_XRAY: /tmp/xray/xray
+          GOTOOLCHAIN: local
+        run: |
+          cp protocol-tests/provider/provider_smoke_test.go sing-box-core/common/tls/
+          cd sing-box-core
+          go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProviderSmoke$' -v

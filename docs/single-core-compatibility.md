@@ -202,3 +202,19 @@ Source: [Xray 26.9.9 XHTTP dialer](https://github.com/XTLS/Xray-core/blob/v26.9.
 IP-endpoint configuration shown for GeodemaWL Cobalt/Lead, but provider availability
 still needs device verification. Reality-over-TCP authentication failures (Magnetit)
 and Kequinq Reality/XHTTP handshake failures are separate open cases.
+
+
+### Optional private provider comparison
+
+The manual `Private provider diagnostic` workflow runs the patched production
+core and reference Xray against identical node settings from a temporary encrypted
+repository secret. It is not a release gate and never runs automatically.
+It reports numeric node index, engine, diagnostic fingerprint, stage and a fixed
+result code. It prints neither configs nor raw errors; reference Xray logging is
+disabled. No credentials or provider JSON are stored in Git or artifacts.
+Delete the temporary secret after the run. A skipped probe is not a provider PASS.
+
+The control fingerprints are diagnostic variants only; this does not change
+fingerprints or select fallback settings in the product. The runner's network
+can differ from the user's mobile network, and settings reconstructed from a
+screenshot require caution if both implementations fail.
