@@ -255,6 +255,26 @@ cleartext branch (both locally and in CI). After the change, 200 repetitions
 with the race detector pass across stream-one, stream-up, and packet-up.
 
 
+### URL probe origins, cancellation, and error stages
+
+The default health probe retains gstatic as its primary origin and can test
+example.com through the same outbound after half the shared deadline. The
+primary retains its full budget; the first authenticated HTTP response wins and
+the losing request is cancelled. A blocked outbound dial never starts a second
+server dial. Explicit profile URLs, protocol settings, and TLS validation are
+retained. Latency describes the origin that answered, rather than an ICMP ping.
+
+Errors retain their cause and distinguish connect, tunnel/TLS, and HTTP-response
+stages. Individual online failures are preserved when native group history
+replays the same zero-delay result without an error code. An explicit TCP dial
+timeout is shown as no TCP connectivity; a DNS/unspecified deadline remains a
+generic timeout. This does not make an unreachable address/port available.
+
+Closing an XHTTP stream now cancels a pending RoundTrip and wakes readers even
+before response headers arrive. A late response is closed without resurrecting
+the stream. Routing-context cancellation after a successful dial still leaves
+the stream usable, as required for long-lived connections.
+
 ### Reality ALPN preservation
 
 uTLS applies its browser preset back to the cloned TLS config. Reading

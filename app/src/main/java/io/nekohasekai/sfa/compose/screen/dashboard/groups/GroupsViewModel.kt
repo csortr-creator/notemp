@@ -393,6 +393,7 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
         val local = RemoteControlManager.remoteServer.value == null
         val sourceProfileId = uiState.value.profileId
         val sourceContent = loadedContent
+        val sourceFingerprints = loadedFingerprints.takeIf { it.first == sourceProfileId }?.second.orEmpty()
         if (
             (!online && (_serviceStatus.value != Status.Stopped || tags.isEmpty())) ||
             !testInFlight.compareAndSet(false, true)
@@ -426,6 +427,30 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                 } catch (e: Exception) {
                     coroutineContext.ensureActive()
                     val outcome = ProbeOutcome.fromThrowable(e)
+                    if (local && tags.size == 1 && outcome.status != ProbeStatus.CANCELLED &&
+                        sourceProfileId == uiState.value.profileId && sourceProfileId == Settings.selectedProfile &&
+                        sourceContent == loadedContent
+                    ) {
+                        val measuredAt = System.currentTimeMillis()
+                        val tag = tags.single()
+                        rememberLatency(sourceProfileId, tag, sourceFingerprints[tag], outcome, measuredAt)
+                        updateState {
+                            if (profileId != sourceProfileId) this else copy(
+                                groups = groups.map { group ->
+                                    group.copy(
+                                        items = group.items.map { item ->
+                                            if (item.tag == tag) item.copy(
+                                                urlTestDelay = 0,
+                                                urlTestTime = measuredAt / 1000,
+                                                probeStatus = outcome.status.name,
+                                                probeDetail = outcome.detail,
+                                            ) else item
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    }
                     logProbe(
                         "probe_finished",
                         testingTag,
@@ -665,25 +690,21 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
                     val items =
                         converted.items.map { item ->
                             if (item.urlTestDelay > 0 || item.urlTestTime > 0L) {
+                                val cached = if (local) fingerprints[item.tag]?.let {
+                                    latencyCache.get(profileId, item.tag, it)
+                                } else null
+                                val outcome = ProbeOutcome.fromOnlineHistory(item.urlTestDelay, item.urlTestTime, cached)
                                 if (local) {
                                     rememberLatency(
                                         profileId,
                                         item.tag,
                                         fingerprints[item.tag],
-                                        if (item.urlTestDelay > 0) {
-                                            ProbeOutcome.success(item.urlTestDelay)
-                                        } else {
-                                            ProbeOutcome(
-                                                ProbeStatus.PROBE_ERROR,
-                                                0,
-                                                "online history zero delay",
-                                            )
-                                        },
+                                        outcome,
                                         item.urlTestTime.takeIf { it > 0 }
                                             ?: System.currentTimeMillis(),
                                     )
                                 }
-                                item
+                                item.copy(probeStatus = outcome.status.name, probeDetail = outcome.detail)
                             } else {
                                 val cached =
                                     if (local) {

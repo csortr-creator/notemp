@@ -179,6 +179,24 @@ else
     git -C sing-box-core apply "$PWD/$XHTTP_HTTP1_LIFECYCLE_PATCH"
 fi
 
+# Cancel pending XHTTP responses with the stream, including blocked readers.
+XHTTP_PENDING_CLOSE_PATCH=patches/sing-box-1.14.2-xhttp-pending-close.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$XHTTP_PENDING_CLOSE_PATCH" 2>/dev/null; then
+    echo "XHTTP pending close patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$XHTTP_PENDING_CLOSE_PATCH"
+    git -C sing-box-core apply "$PWD/$XHTTP_PENDING_CLOSE_PATCH"
+fi
+
+# Probe another origin within the shared timeout, preserving strict TLS and explicit URLs.
+URLTEST_RESILIENCE_PATCH=patches/sing-box-1.14.2-urltest-resilience.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$URLTEST_RESILIENCE_PATCH" 2>/dev/null; then
+    echo "URL test resilience patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$URLTEST_RESILIENCE_PATCH"
+    git -C sing-box-core apply "$PWD/$URLTEST_RESILIENCE_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

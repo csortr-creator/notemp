@@ -84,4 +84,22 @@ class ProbeOutcomeTest {
         assertEquals("", r.detail)
         assertFalse(cache.encode().contains("no such host"))
     }
+
+    @Test
+    fun socketConnectTimeoutIsDistinctFromResponseTimeout() {
+        val tcp = ProbeOutcome.fromThrowable(RuntimeException("url test: rpc error: code = DeadlineExceeded desc = dial rmnet_data3 (32): dial tcp 192.0.2.1:8443: i/o timeout"))
+        assertEquals(ProbeStatus.CONNECT_TIMEOUT, tcp.status)
+        val response = ProbeOutcome.fromThrowable(RuntimeException("urltest http-response: context deadline exceeded"))
+        assertEquals(ProbeStatus.TIMEOUT, response.status)
+    }
+
+    @Test
+    fun nativeReplayRetainsPreciseFailureButNewHistoryReplacesIt() {
+        // Legacy seconds and current milliseconds are both accepted.
+        val fresh = ProfileLatencyCache.Result(0, 1_800_000_000_500L, ProbeStatus.CONNECT_TIMEOUT)
+        assertEquals(ProbeStatus.CONNECT_TIMEOUT, ProbeOutcome.fromOnlineHistory(0, 1_800_000_000L, fresh.copy(time = 1_800_000_000L)).status)
+        assertEquals(ProbeStatus.CONNECT_TIMEOUT, ProbeOutcome.fromOnlineHistory(0, 1_800_000_000L, fresh).status)
+        assertEquals(ProbeStatus.PROBE_ERROR, ProbeOutcome.fromOnlineHistory(0, 1_800_000_001L, fresh).status)
+        assertEquals(ProbeStatus.SUCCESS, ProbeOutcome.fromOnlineHistory(70, 1_800_000_001L, fresh).status)
+    }
 }

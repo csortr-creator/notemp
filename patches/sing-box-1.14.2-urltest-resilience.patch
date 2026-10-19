@@ -1,0 +1,221 @@
+--- a/common/urltest/urltest.go
++++ b/common/urltest/urltest.go
+@@ -3,10 +3,13 @@
+ import (
+ 	"context"
+ 	"crypto/tls"
++	"fmt"
+ 	"net"
+ 	"net/http"
++	"net/http/httptrace"
+ 	"net/url"
+ 	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+@@ -128,6 +131,14 @@
+ func URLTest(ctx context.Context, link string, detour N.Dialer) (uint16, error) {
+ 	ctx, cancel := context.WithTimeout(ctx, ProbeTimeout(ctx))
+ 	defer cancel()
++	if link == "" {
++		warm, explicit := ctx.Value(probeModeKey{}).(bool)
++		if !explicit {
++			mux, ok := common.Cast[adapter.OutboundWithMultiplex](detour)
++			warm = ok && mux.MultiplexEnabled()
++		}
++		return urlTestCandidates(ctx, []string{"https://www.gstatic.com/generate_204", "https://example.com/"}, detour, warm)
++	}
+ 	if warm, explicit := ctx.Value(probeModeKey{}).(bool); explicit {
+ 		return urlTestMode(ctx, link, detour, warm)
+ 	}
+@@ -145,7 +156,11 @@
+ 	return urlTestMode(ctx, link, detour, false)
+ }
+ 
+-func urlTestMode(ctx context.Context, link string, detour N.Dialer, warm bool) (t uint16, err error) {
++func urlTestMode(ctx context.Context, link string, detour N.Dialer, warm bool) (uint16, error) {
++	return urlTestAttempt(ctx, link, detour, warm, nil)
++}
++
++func urlTestAttempt(ctx context.Context, link string, detour N.Dialer, warm bool, connected func()) (t uint16, err error) {
+ 	if link == "" {
+ 		link = "https://www.gstatic.com/generate_204"
+ 	}
+@@ -167,9 +182,14 @@
+ 	start := time.Now()
+ 	instance, err := detour.DialContext(ctx, "tcp", M.ParseSocksaddrHostPortStr(hostname, port))
+ 	if err != nil {
+-		return
++		return 0, &ProbeError{Stage: "connect", Err: err}
+ 	}
+ 	defer instance.Close()
++	stopClose := context.AfterFunc(ctx, func() { _ = instance.Close() })
++	defer stopClose()
++	if connected != nil {
++		connected()
++	}
+ 	if N.NeedHandshakeForWrite(instance) {
+ 		start = time.Now()
+ 	}
+@@ -177,12 +197,13 @@
+ 	if err != nil {
+ 		return
+ 	}
+-	firstConnection := true
++	var firstConnection atomic.Bool
++	firstConnection.Store(true)
++	var wroteRequest atomic.Bool
+ 	client := http.Client{
+ 		Transport: &http.Transport{
+ 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+-				if firstConnection {
+-					firstConnection = false
++				if firstConnection.Swap(false) {
+ 					return instance, nil
+ 				}
+ 				// Reconnect if the test endpoint explicitly closes keep-alive.
+@@ -199,19 +220,39 @@
+ 		Timeout: ProbeTimeout(ctx),
+ 	}
+ 	defer client.CloseIdleConnections()
+-	resp, err := client.Do(req.WithContext(ctx))
+-	if err != nil {
+-		return
++	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
++		if info.Err == nil {
++			wroteRequest.Store(true)
++		}
++	}}
++	req = req.WithContext(httptrace.WithClientTrace(ctx, trace))
++	resp, err := client.Do(req)
++	if err != nil {
++		stage := "tunnel-or-tls"
++		if wroteRequest.Load() {
++			stage = "http-response"
++		}
++		return 0, &ProbeError{Stage: stage, Err: err}
+ 	}
+ 	resp.Body.Close()
+ 	if warm {
+ 		start = time.Now()
+-		resp, err = client.Do(req.Clone(ctx))
++		resp, err = client.Do(req.Clone(req.Context()))
+ 		if err != nil {
+-			return
++			return 0, &ProbeError{Stage: "warm-response", Err: err}
+ 		}
+ 		resp.Body.Close()
+ 	}
+ 	t = uint16(time.Since(start) / time.Millisecond)
+ 	return
+ }
++
++// ProbeError preserves the original cause while reporting how far the probe got.
++// A successful dial alone is never recorded as a successful URL test.
++type ProbeError struct {
++	Stage string
++	Err   error
++}
++
++func (e *ProbeError) Error() string { return fmt.Sprintf("urltest %s: %v", e.Stage, e.Err) }
++func (e *ProbeError) Unwrap() error { return e.Err }
+--- /dev/null
++++ b/common/urltest/default_probe.go
+@@ -0,0 +1,96 @@
++package urltest
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"time"
++
++	N "github.com/sagernet/sing/common/network"
++)
++
++type candidateResult struct {
++	delay uint16
++	err   error
++}
++
++// Keep the primary's full timeout. After half the shared budget, a second
++// origin may test an already dialled tunnel. Both attempts use the same outbound.
++// Explicit profile URLs never enter this path; no protocol settings are changed.
++func urlTestCandidates(parent context.Context, links []string, detour N.Dialer, warm bool) (uint16, error) {
++	ctx, cancel := context.WithCancel(parent)
++	defer cancel()
++	results := make(chan candidateResult, 2)
++	connected := make(chan struct{})
++	go func() {
++		d, e := urlTestAttempt(ctx, links[0], detour, warm, func() { close(connected) })
++		results <- candidateResult{d, e}
++	}()
++	budget := ProbeTimeout(ctx)
++	if deadline, ok := ctx.Deadline(); ok {
++		budget = time.Until(deadline)
++	}
++	timer := time.NewTimer(max(budget/2, time.Millisecond))
++	defer timer.Stop()
++	var primaryErr error
++	held, fallback := false, false
++	launchFallback := func() {
++		fallback = true
++		go func() { d, e := urlTestAttempt(ctx, links[1], detour, warm, nil); results <- candidateResult{d, e} }()
++	}
++	for {
++		select {
++		case result := <-results:
++			if result.err == nil {
++				return max(result.delay, 1), nil
++			}
++			if !fallback {
++				if !retryableOriginFailure(result.err) {
++					return 0, result.err
++				}
++				primaryErr = result.err
++				launchFallback()
++			} else if primaryErr != nil {
++				return 0, primaryErr
++			} else {
++				primaryErr = result.err
++			}
++		case <-timer.C:
++			held = true
++			if connected == nil && !fallback {
++				launchFallback()
++			}
++		case <-connected:
++			connected = nil
++			if held && !fallback {
++				launchFallback()
++			}
++		case <-ctx.Done():
++			if primaryErr != nil && parent.Err() == nil {
++				return 0, primaryErr
++			}
++			stage := "connect"
++			if connected == nil {
++				stage = "tunnel-or-origin"
++			} else {
++				select {
++				case <-connected:
++					stage = "tunnel-or-origin"
++				default:
++				}
++			}
++			return 0, &ProbeError{Stage: stage, Err: ctx.Err()}
++		}
++	}
++}
++
++func retryableOriginFailure(err error) bool {
++	var phase *ProbeError
++	if !errors.As(err, &phase) || phase.Stage == "connect" {
++		return false
++	}
++	var networkError net.Error
++	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
++		(errors.As(err, &networkError) && networkError.Timeout())
++}

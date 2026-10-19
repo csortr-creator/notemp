@@ -1192,6 +1192,7 @@ private fun ServerListRow(
 
 private fun probeStatusLabel(status: String): String = when (status) {
     "TIMEOUT" -> "Таймаут"
+    "CONNECT_TIMEOUT" -> "Нет TCP-связи"
     "DNS_ERROR" -> "DNS"
     "HANDSHAKE_ERROR" -> "Handshake"
     "HTTP_ERROR" -> "HTTP"

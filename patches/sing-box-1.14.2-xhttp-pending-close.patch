@@ -1,0 +1,80 @@
+--- a/transport/v2rayxhttp/client.go
++++ b/transport/v2rayxhttp/client.go
+@@ -226,12 +226,15 @@
+ 	// The logical connection can outlive the routing context that initiated
+ 	// DialContext. Xray deliberately detaches its streaming HTTP request here;
+ 	// the pipe/response bodies still provide the transport close signal.
+-	request, err := http.NewRequestWithContext(context.WithoutCancel(ctx), method, c.requestURL, body)
+-	if err != nil {
++	requestCtx, cancelRequest := context.WithCancel(context.WithoutCancel(ctx))
++	request, err := http.NewRequestWithContext(requestCtx, method, c.requestURL, body)
++	if err != nil {
++		cancelRequest()
+ 		return nil, err
+ 	}
+ 	c.config.fillStreamRequest(request, sessionID)
+ 	reader := newWaitingResponseBody()
++	reader.cancel = cancelRequest
+ 	gotConnection := make(chan struct{})
+ 	var gotConnectionOnce sync.Once
+ 	notifyConnection := func() { gotConnectionOnce.Do(func() { close(gotConnection) }) }
+@@ -264,11 +267,13 @@
+ }
+ 
+ type waitingResponseBody struct {
+-	ready  chan struct{}
+-	access sync.Mutex
+-	body   io.ReadCloser
+-	err    error
+-	closed bool
++	ready     chan struct{}
++	readyOnce sync.Once
++	cancel    context.CancelFunc
++	access    sync.Mutex
++	body      io.ReadCloser
++	err       error
++	closed    bool
+ }
+ 
+ func newWaitingResponseBody() *waitingResponseBody {
+@@ -277,11 +282,15 @@
+ 
+ func (r *waitingResponseBody) set(body io.ReadCloser, err error) {
+ 	r.access.Lock()
+-	if r.closed && body != nil {
+-		_ = body.Close()
++	if r.closed {
++		r.access.Unlock()
++		if body != nil {
++			_ = body.Close()
++		}
++		return
+ 	}
+ 	r.body, r.err = body, err
+-	close(r.ready)
++	r.readyOnce.Do(func() { close(r.ready) })
+ 	r.access.Unlock()
+ }
+ 
+@@ -301,9 +310,21 @@
+ 
+ func (r *waitingResponseBody) Close() error {
+ 	r.access.Lock()
++	if r.closed {
++		r.access.Unlock()
++		return nil
++	}
+ 	r.closed = true
+ 	body := r.body
++	if body == nil && r.err == nil {
++		r.err = net.ErrClosed
++	}
++	r.readyOnce.Do(func() { close(r.ready) })
+ 	r.access.Unlock()
++	// Detach from the routing context, but never from the stream's own lifetime.
++	if r.cancel != nil {
++		r.cancel()
++	}
+ 	if body != nil {
+ 		return body.Close()
+ 	}

@@ -172,6 +172,8 @@ jobs:
           echo '23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae  /tmp/xray.zip' | sha256sum --check
           mkdir -p /tmp/xray
           unzip -q /tmp/xray.zip -d /tmp/xray
+          cp protocol-tests/xhttp/sfa_pending_close_test.go sing-box-core/transport/v2rayxhttp/
+          cp protocol-tests/urltest/*_test.go sing-box-core/common/urltest/
           cd sing-box-core
           XHTTP_XRAY_BINARY=/tmp/xray/xray go test -race -timeout 5m \
             -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./transport/v2rayxhttp ./transport/v2ray ./option ./experimental/libbox ./common/tls ./daemon ./common/urltest ./transport/vlessenc ./protocol/group

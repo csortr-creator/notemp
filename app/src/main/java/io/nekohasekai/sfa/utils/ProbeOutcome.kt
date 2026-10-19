@@ -4,7 +4,8 @@ package io.nekohasekai.sfa.utils
  * Result of a single outbound URLTest probe.
  *
  * Core method (sing-box urltest): TCP dial via outbound + HTTP HEAD to
- * [DEFAULT_PROBE_URL] (when URL is empty). HTTP status codes are **not** checked by
+ * [DEFAULT_PROBE_URL], with a second origin inside the same timeout when the
+ * default origin stalls. Explicit URLs are retained. HTTP status codes are **not** checked by
  * core — a 403/404/405 after a successful response still yields SUCCESS with delay.
  * Failures return an error from libbox; Kotlin must not discard it as delay=0 only.
  */
@@ -13,6 +14,7 @@ enum class ProbeStatus {
     TESTING,
     SUCCESS,
     TIMEOUT,
+    CONNECT_TIMEOUT,
     DNS_ERROR,
     HANDSHAKE_ERROR,
     HTTP_ERROR,
@@ -62,6 +64,8 @@ data class ProbeOutcome(
                         ProbeStatus.CANCELLED
                     // Timeouts first: core often reports "dns: exchange failed … deadline exceeded"
                     // which is a timeout on the DNS exchange, not NXDOMAIN.
+                    has("dial tcp ") &&
+                        has("deadline exceeded", "i/o timeout", "timed out") -> ProbeStatus.CONNECT_TIMEOUT
                     has(
                         "SocketTimeoutException",
                         "TimeoutException",
@@ -101,6 +105,25 @@ data class ProbeOutcome(
                     .orEmpty()
                     .take(160)
             return ProbeOutcome(status, delayMs = 0, detail = detail)
+        }
+
+        /** Preserve a precise individual failure when the native stream replays
+         * the same second-resolution zero-delay history without an error code. */
+        fun fromOnlineHistory(
+            delay: Int,
+            timeSeconds: Long,
+            cached: ProfileLatencyCache.Result?,
+        ): ProbeOutcome {
+            if (delay > 0) return success(delay)
+            val precise = cached?.status !in setOf(
+                null, ProbeStatus.UNTESTED, ProbeStatus.TESTING,
+                ProbeStatus.SUCCESS, ProbeStatus.CANCELLED, ProbeStatus.PROBE_ERROR,
+            )
+            val cachedMillis = cached?.time?.let { if (it < 100_000_000_000L) it * 1000 else it } ?: 0L
+            if (cached != null && precise && cachedMillis >= timeSeconds * 1000) {
+                return ProbeOutcome(cached.status, 0, cached.detail)
+            }
+            return ProbeOutcome(ProbeStatus.PROBE_ERROR)
         }
     }
 }
