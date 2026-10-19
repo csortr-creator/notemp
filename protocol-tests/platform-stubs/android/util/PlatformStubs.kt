@@ -1,6 +1,8 @@
 package android.util
+
 object Log {
-    fun w(tag: String, text: String) = 0
-    fun e(tag: String, text: String) = 0
-    fun i(tag: String, text: String) = 0
+    @JvmStatic fun d(tag: String, msg: String): Int = 0
+    @JvmStatic fun w(tag: String, msg: String, t: Throwable? = null): Int = 0
+    @JvmStatic fun e(tag: String, msg: String): Int = 0
+    @JvmStatic fun e(tag: String, msg: String, t: Throwable): Int = 0
 }

@@ -14,7 +14,7 @@ class ServiceBinderTest {
         override fun dispatch(context: CoroutineContext, block: Runnable) { queue.add(block) }
         fun drain() { while (queue.isNotEmpty()) queue.removeFirst().run() }
     }
-    private open class Callback : IServiceCallback {
+    private open class Callback : IServiceCallback { override fun asBinder(): android.os.IBinder = error("")
         val statuses = mutableListOf<Int>()
         var alerts = 0
         override fun onServiceStatusChanged(status: Int) { statuses.add(status) }

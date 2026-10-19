@@ -7,3 +7,8 @@ class ParcelFileDescriptor : java.io.Closeable {
     override fun close() {}
     companion object { fun fromFd(fd: Int) = ParcelFileDescriptor() }
 }
+interface IBinder
+interface IInterface {
+    fun asBinder(): IBinder
+}
+open class RemoteException : Exception()
