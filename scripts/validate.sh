@@ -36,6 +36,7 @@ REQUIRED_CORE_PATCHES=(
   sing-box-1.14.2-reality-hybrid-option.patch
   sing-box-1.14.2-probe-failure-display.patch
   sing-box-1.14.2-reality-client-version.patch
+  sing-box-1.14.2-reality-clock.patch
 )
 
 usage() {

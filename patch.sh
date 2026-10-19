@@ -134,6 +134,15 @@ else
     git -C sing-box-core apply "$PWD/$REALITY_VERSION_PATCH"
 fi
 
+# Use the configured/NTP clock in the authenticated Reality timestamp.
+REALITY_CLOCK_PATCH=patches/sing-box-1.14.2-reality-clock.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$REALITY_CLOCK_PATCH" 2>/dev/null; then
+    echo "Reality clock patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$REALITY_CLOCK_PATCH"
+    git -C sing-box-core apply "$PWD/$REALITY_CLOCK_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

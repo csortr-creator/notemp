@@ -49,7 +49,7 @@ class TileService :
     private fun toggleService() {
         when (connection.status) {
             Status.Stopped -> BoxService.start()
-            Status.Started -> BoxService.stop()
+            Status.Starting, Status.Started -> BoxService.stop()
             else -> {}
         }
     }

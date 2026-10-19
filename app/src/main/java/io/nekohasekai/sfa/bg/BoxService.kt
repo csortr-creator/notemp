@@ -123,6 +123,12 @@ class BoxService(private val service: Service, private val platformInterface: Pl
                         ) {
                             return
                         }
+                        // Notification and Quick Settings send an unscoped user Stop.
+                        // Invalidate a start even while Starting: its completion takes
+                        // quietStopAfterStaleStart instead of publishing Started.
+                        if (stopRequestId <= 0L && expectedProfileId <= 0L) {
+                            RuntimeProfileState.requestUserStop()
+                        }
                         stopService()
                     }
 

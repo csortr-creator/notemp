@@ -14,6 +14,19 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object RuntimeProfileState {
     private val switchIds = AtomicLong(0L)
+    @Volatile
+    private var userStopId = 0L
+
+    /** Invalidate in-flight starts and queued selections for an explicit user Stop. */
+    @Synchronized
+    fun requestUserStop(): Long {
+        val id = nextSwitchRequestId()
+        userStopId = id
+        return id
+    }
+
+    fun currentUserStopId(): Long = userStopId
+
     private val deletingProfileIds = mutableSetOf<Long>()
 
     @Volatile

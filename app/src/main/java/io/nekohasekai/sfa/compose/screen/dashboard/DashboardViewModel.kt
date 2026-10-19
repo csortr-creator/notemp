@@ -143,7 +143,7 @@ data class DashboardUiState(
 class DashboardViewModel :
     BaseViewModel<DashboardUiState, UiEvent>(),
     CommandClient.Handler {
-    private val selectionQueue = ProfileSelectionQueue()
+    private val selectionQueue = ProfileSelectionQueue(RuntimeProfileState::currentUserStopId)
     private var selectionJob: Job? = null
     private val _serviceStatus = MutableStateFlow(Status.Stopped)
     val serviceStatus: StateFlow<Status> = _serviceStatus.asStateFlow()
@@ -249,7 +249,7 @@ class DashboardViewModel :
 
     private fun stopService() {
         selectionQueue.cancelAll()
-        val stopId = RuntimeProfileState.nextSwitchRequestId()
+        val stopId = RuntimeProfileState.requestUserStop()
         selectionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -359,6 +359,7 @@ class DashboardViewModel :
                             }
                             true
                         } == true
+                    if (RuntimeProfileState.currentUserStopId() > switchId) return@launch
                     if (!leftStopped) {
                         Log.e(TAG, "START_NEW never left Stopped")
                         RuntimeProfileState.nextSwitchRequestId()
@@ -373,6 +374,7 @@ class DashboardViewModel :
                             }
                             _serviceStatus.value
                         }
+                    if (RuntimeProfileState.currentUserStopId() > switchId) return@launch
                     if (terminal != Status.Started) {
                         Log.e(TAG, "START_NEW failed terminal=$terminal")
                         RuntimeProfileState.nextSwitchRequestId()

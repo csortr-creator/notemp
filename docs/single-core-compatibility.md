@@ -155,3 +155,28 @@ These local fixtures do not establish the version policy or availability of
 any provider endpoint. In particular, Russia Hysteria2/Salamander failures
 are independent of REALITY and require a reachable endpoint or its runtime
 error to diagnose.
+
+
+### Configured Reality clock
+
+Reality previously overwrote its NTP/configured timestamp with `time.Now()`.
+The incremental clock patch uses the same configured time as the TLS client.
+`TestSFARealityConfiguredClock` captures and decrypts the authenticated outgoing
+ClientHello with synthetic keys for Chrome and Firefox (including Clone), and
+checks a clock deliberately different from the machine's. It fails before the
+patch and passes afterward. This can correct clock-policy rejection when an
+NTP correction is configured; it does not establish that clock skew caused a
+particular provider rejection.
+
+### External Stop during profile switching
+
+Unscoped notification and Quick Settings Stop now record an explicit user-stop
+generation. Starting services reject stale completion through the existing quiet
+teardown path. The profile selection queue observes that generation synchronously
+before taking or dispatching a request, discarding earlier pending work and
+retaining the active cleanup slot. Dashboard Stop uses the same generation.
+Quick Settings also accepts Stop during Starting. Internal switch/deletion stops
+retain their existing scoped behavior. JVM tests exercise stale completion,
+active/pending cancellation without a UI callback, later selection, and internal
+switch preservation. Android startup/notification timing still requires device
+verification.
