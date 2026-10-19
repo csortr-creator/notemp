@@ -218,3 +218,19 @@ The control fingerprints are diagnostic variants only; this does not change
 fingerprints or select fallback settings in the product. The runner's network
 can differ from the user's mobile network, and settings reconstructed from a
 screenshot require caution if both implementations fail.
+
+
+### Reality ALPN preservation
+
+uTLS applies its browser preset back to the cloned TLS config. Reading
+`uConfig.NextProtos` after the preset therefore reads browser defaults, rather
+than the caller's requested ALPN. Reality previously sent both h2 and HTTP/1.1
+when the caller explicitly requested either protocol alone.
+
+The Reality patch snapshots the requested ALPN before building the preset and
+marshals ALPN and key-share changes before authenticating the raw ClientHello.
+`TestSFARealityConfiguredALPN` captures the actual wire record for Chrome/Firefox
+and h2/HTTP1.1, including Clone; all four cases fail before and pass afterward.
+Reality/XHTTP exchanges and wrong-key/short-ID controls verify that authentication
+is retained. This corrects configured transport behavior; it is not proof that a
+specific provider's authentication failure was caused by ALPN.

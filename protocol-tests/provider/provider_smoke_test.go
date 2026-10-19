@@ -58,12 +58,17 @@ func TestSFAProviderSmoke(t *testing.T) {
 		t.Fatal("reference fixture missing")
 	}
 	for index, node := range nodes {
-		for _, fp := range []string{"firefox", "chrome"} {
-			for _, engine := range []string{"sing-box", "xray"} {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				stage, err := providerProbe(ctx, t, node, fp, engine, binary)
-				cancel()
-				t.Logf("SFA_PROVIDER_RESULT node=%d engine=%s fp=%s stage=%s code=%s", index, engine, fp, stage, providerErrorCode(err))
+		for _, target := range []struct{ address, path string }{
+			{"www.gstatic.com:443", "/generate_204"},
+			{"example.com:443", "/"},
+		} {
+			for _, fp := range []string{"firefox", "chrome"} {
+				for _, engine := range []string{"sing-box", "xray"} {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					stage, err := providerProbe(ctx, t, node, fp, engine, binary, target.address, target.path)
+					cancel()
+					t.Logf("SFA_PROVIDER_RESULT node=%d engine=%s fp=%s target=%s stage=%s code=%s", index, engine, fp, target.address, stage, providerErrorCode(err))
+				}
 			}
 		}
 	}
@@ -83,13 +88,26 @@ func providerErrorCode(err error) string {
 		return "timeout"
 	case strings.Contains(s, "refused"):
 		return "connection_refused"
+	case strings.Contains(s, "eof"):
+		return "eof"
+	case strings.Contains(s, "reset by peer"):
+		return "connection_reset"
+	case strings.Contains(s, "closed pipe") || strings.Contains(s, "broken pipe"):
+		return "closed_pipe"
+	case strings.Contains(s, "remote error: tls"):
+		return "tls_alert"
+	case strings.Contains(s, "first record does not look like"):
+		return "non_tls_response"
 	default:
 		return "failed"
 	}
 }
 
-func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine, binary string) (string, error) {
-	const target = "www.gstatic.com:443"
+func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine, binary, target, path string) (string, error) {
+	host, _, splitErr := net.SplitHostPort(target)
+	if splitErr != nil {
+		return "target_config", splitErr
+	}
 	d, err := dialer.NewDefault(ctx, option.DialerOptions{})
 	if err != nil {
 		return "dialer", err
@@ -159,12 +177,12 @@ func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine
 	// Bound every stage, including transports whose SetDeadline is unsupported.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
-	https := stdtls.Client(conn, &stdtls.Config{ServerName: "www.gstatic.com", MinVersion: stdtls.VersionTLS12})
+	https := stdtls.Client(conn, &stdtls.Config{ServerName: host, MinVersion: stdtls.VersionTLS12})
 	defer https.Close()
 	if err = https.HandshakeContext(ctx); err != nil {
 		return "origin_tls", err
 	}
-	_, err = io.WriteString(https, "GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\n\r\n")
+	_, err = fmt.Fprintf(https, "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host)
 	if err != nil {
 		return "origin_write", err
 	}
@@ -173,7 +191,7 @@ func providerProbe(ctx context.Context, t *testing.T, n providerNode, fp, engine
 		return "origin_read", err
 	}
 	response.Body.Close()
-	if response.StatusCode != 204 {
+	if response.StatusCode != 204 && response.StatusCode != 200 {
 		return "origin_status", fmt.Errorf("unexpected status")
 	}
 	return "complete", nil

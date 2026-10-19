@@ -1,0 +1,42 @@
+--- a/common/tls/reality_client.go
++++ b/common/tls/reality_client.go
+@@ -145,6 +145,9 @@
+ 	verifier := &realityVerifier{
+ 		serverName: e.uClient.ServerName(),
+ 	}
++	// uTLS applies its preset back to uConfig, including NextProtos.
++	// Preserve the requested ALPN before building that preset.
++	nextProtos := slices.Clone(e.uClient.config.NextProtos)
+ 	uConfig := e.uClient.config.Clone()
+ 	uConfig.InsecureSkipVerify = true
+ 	uConfig.SessionTicketsDisabled = true
+@@ -158,20 +161,20 @@
+ 	if e.disableMLKEM {
+ 		removeRealityHybridShare(uConn)
+ 	}
+-	// Keep the configured hybrid key share: modern Xray servers require it.
+-	// Reality authentication still uses the separate X25519 ECDHE key below.
+-	err = uConn.BuildHandshakeState()
+-	if err != nil {
+-		return nil, err
+-	}
+-
+-	if len(uConfig.NextProtos) > 0 {
++	if len(nextProtos) > 0 {
+ 		for _, extension := range uConn.Extensions {
+ 			if alpnExtension, isALPN := extension.(*utls.ALPNExtension); isALPN {
+-				alpnExtension.AlpnProtocols = uConfig.NextProtos
++				alpnExtension.AlpnProtocols = nextProtos
+ 				break
+ 			}
+ 		}
++	}
++
++	// Marshal all requested changes before sealing the session against Raw.
++	// A later mutation would invalidate REALITY's authenticated ClientHello.
++	err = uConn.BuildHandshakeState()
++	if err != nil {
++		return nil, err
+ 	}
+ 
+ 	hello := uConn.HandshakeState.Hello

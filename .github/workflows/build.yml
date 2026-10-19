@@ -194,7 +194,7 @@ jobs:
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
             ./protocol/vless -run '^TestSFA(Salamander|TCPHeader)' -count=3 -v
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
-            ./common/tls -run '^TestSFAReality(XrayInterop|HybridOptionInterop|HybridClientHello|MinimumVersionInterop|ConfiguredClock)$' -count=3 -v
+            ./common/tls -run '^TestSFAReality(XrayInterop|HybridOptionInterop|HybridClientHello|MinimumVersionInterop|ConfiguredClock|ConfiguredALPN)$' -count=3 -v
           go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
             ./transport/v2rayxhttp -run '^TestSFA(PanelRealityXHTTP|XHTTPVirtualHost)$' -count=2 -v
           XHTTP_XRAY_BINARY=/tmp/xray-modern/xray go test -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls \
