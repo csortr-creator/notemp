@@ -54,7 +54,7 @@ func sfaCheckRealityXray(t *testing.T, binary, flow string) {
 	sfaCheckRealityCombination(t, binary, flow, "chrome", "")
 }
 
-func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encryptionMode string) {
+func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encryptionMode string, hybrid ...*bool) {
 	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	target.Config.ErrorLog = log.New(io.Discard, "", 0)
 	target.EnableHTTP2 = true
@@ -126,10 +126,14 @@ func sfaCheckRealityCombination(t *testing.T, binary, flow, fingerprint, encrypt
 				}
 				public = other.PublicKey().Bytes()
 			}
+			var supportHybrid *bool
+			if len(hybrid) != 0 {
+				supportHybrid = hybrid[0]
+			}
 			config, err := NewRealityClient(context.Background(), logger.NOP(), "example.com", option.OutboundTLSOptions{
 				Enabled: true, ServerName: "example.com",
 				UTLS:    &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fingerprint},
-				Reality: &option.OutboundRealityOptions{Enabled: true, PublicKey: base64.RawURLEncoding.EncodeToString(public), ShortID: tc.shortID},
+				Reality: &option.OutboundRealityOptions{SupportX25519MLKEM768: supportHybrid, Enabled: true, PublicKey: base64.RawURLEncoding.EncodeToString(public), ShortID: tc.shortID},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -318,4 +322,22 @@ func sfaStartRealityXray(t *testing.T, binary, target string, private []byte, de
 	}
 	t.Fatal("Xray fixture did not listen before deadline")
 	return ""
+}
+
+func TestSFARealityHybridOptionInterop(t *testing.T) {
+	for _, fixture := range []struct {
+		name, env string
+		hybrid    bool
+	}{
+		{"legacy-explicit-false", "XHTTP_XRAY_BINARY", false},
+		{"modern-explicit-true", "SFA_REALITY_XRAY_BINARY", true},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			binary := os.Getenv(fixture.env)
+			if binary == "" {
+				t.Skip("Xray fixture not configured")
+			}
+			sfaCheckRealityCombination(t, binary, "", "chrome", "", &fixture.hybrid)
+		})
+	}
 }

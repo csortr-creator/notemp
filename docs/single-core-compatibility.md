@@ -9,6 +9,7 @@ The table describes implemented paths, not a guarantee that a remote server is r
 | SNI / ALPN | `tls.server_name` / `tls.alpn` | Preserve provider values and certificate verification |
 | Xray certificate pins / names | Native verification options | Existing mapping; no conversion into `insecure` |
 | Reality public key / short ID / fingerprint | Native Reality TLS options | Existing core compatibility patches; fingerprint support still matters |
+| Mihomo Reality `support-x25519mlkem768` | `tls.reality.support_x25519mlkem768` | URI/Base64 and Clash JSON/YAML; explicit false removes hybrid shares for legacy servers, absent/true preserves browser shares |
 | XHTTP padding range | `transport.x_padding_bytes` | Existing parser/core support; conflicting aliases rejected |
 | VLESS Encryption + Vision | `encryption` + `flow` | Native single-key `mlkem768x25519plus.native.0rtt/1rtt`; Vision can use the encryption connection without removing either layer |
 | FinalMask UDP Salamander | Hysteria2 `obfs.type=salamander` | One mask, password-only settings, at least four UTF-8 bytes; proxy authentication remains separate |
@@ -114,3 +115,19 @@ not become a successful import by removing encryption or certificate checks.
 References: pinned Xray `infra/conf/transport_finalmask.go` and
 `transport/internet/finalmask/header/custom/tcp.go`; pinned sing-quic
 `hysteria2/salamander.go`; local interoperability fixtures.
+
+## Android network startup and remote rules
+
+The initial default-interface update completes synchronously before the native
+monitor registration returns. Android may deliver `onAvailable` before link
+properties or an interface index exist; registration waits up to five seconds
+for a usable snapshot instead of starting DNS/rule-set downloads against an
+empty native interface list. Later link-property updates trigger a refresh.
+Cancelled updates cannot publish into a replaced listener. A missing network
+fails startup explicitly; routing rules are never skipped to make startup pass.
+
+Hybrid-option regression tests capture the actual outgoing ClientHello for
+Chrome/Firefox/Safari, including cloned configurations, and check both supported
+groups and key shares. Legacy Xray with explicit false and current Xray with
+explicit true must complete HTTPS and reject wrong Reality keys/short IDs.
+The source flag is validated as a boolean and is rejected without Reality.

@@ -23,6 +23,7 @@ sourceSets.main {
     kotlin.include("io/nekohasekai/sfa/utils/ProfileLatencyCache.kt")
     kotlin.include("io/nekohasekai/sfa/utils/ProbeOutcome.kt")
     kotlin.include("io/nekohasekai/sfa/utils/ProbeNetworkReadiness.kt")
+    kotlin.include("io/nekohasekai/sfa/utils/InitialInterfaceReadiness.kt")
     kotlin.include("io/nekohasekai/sfa/utils/NetworkErrorPresentation.kt")
     kotlin.include("io/nekohasekai/sfa/utils/SubscriptionFetchRetry.kt")
     kotlin.include("io/nekohasekai/sfa/utils/NodeCoreHarness.kt")

@@ -639,7 +639,7 @@ internal class SubscriptionContentParser(
         val security = (params["security"] ?: "none").lowercase()
         require(security in setOf("none", "tls", "reality")) { "Unsupported VLESS security" }
         ProxyLinkParser.applyVlessEncryption(outbound, params["encryption"], flow)
-        require(security == "reality" || listOf("pbk", "sid").none { !params[it].isNullOrBlank() }) { "Invalid Reality options without Reality security" }
+        require(security == "reality" || listOf("pbk", "sid", "support-x25519mlkem768").none { !params[it].isNullOrBlank() }) { "Invalid Reality options without Reality security" }
         require(security != "none" || listOf("sni", "fp", "alpn", "allowInsecure", "pcs", "vcn").none { !params[it].isNullOrBlank() }) { "Invalid TLS options without TLS security" }
         if (security == "reality") {
             val key = params["pbk"].orEmpty()
@@ -676,6 +676,7 @@ internal class SubscriptionContentParser(
                 params["sid"].orEmpty(),
                 spiderX = params["spiderX"] ?: params["spx"],
                 fingerprint = params["fp"] ?: fp,
+                supportX25519MLKEM768 = params["support-x25519mlkem768"]?.let(ProxyLinkParser::boolean),
             )
             outbound.put("tls", tls)
         } else if (security == "tls") {
@@ -868,7 +869,7 @@ internal class SubscriptionContentParser(
             },
         )
 
-        require(params["security"] == "reality" || listOf("pbk", "sid").none { !params[it].isNullOrBlank() }) { "Invalid Reality options without Reality security" }
+        require(params["security"] == "reality" || listOf("pbk", "sid", "support-x25519mlkem768").none { !params[it].isNullOrBlank() }) { "Invalid Reality options without Reality security" }
         require(params["security"] != "reality" || listOf("pcs", "vcn").none { !params[it].isNullOrBlank() }) { "Invalid certificate verification options with Reality" }
         ProxyLinkParser.applyXrayVerification(outbound.getJSONObject("tls"), params["pcs"], params["vcn"])
         if (params["security"] == "reality") {
@@ -878,6 +879,7 @@ internal class SubscriptionContentParser(
                 params["sid"].orEmpty(),
                 spiderX = params["spiderX"] ?: params["spx"],
                 fingerprint = params["fp"],
+                supportX25519MLKEM768 = params["support-x25519mlkem768"]?.let(ProxyLinkParser::boolean),
             )
         }
         val network = params["type"] ?: "tcp"

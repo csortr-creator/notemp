@@ -22,6 +22,7 @@ package io.nekohasekai.sfa.bg
 
 import android.annotation.TargetApi
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -146,6 +147,10 @@ object DefaultNetworkListener {
 
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             // it's a good idea to refresh capabilities
+            runBlocking { networkActor.send(NetworkMessage.Update(network)) }
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
             runBlocking { networkActor.send(NetworkMessage.Update(network)) }
         }
 

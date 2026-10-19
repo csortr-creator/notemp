@@ -204,6 +204,7 @@ internal object ProxyLinkParser {
         shortId: String,
         spiderX: String? = null,
         fingerprint: String? = null,
+        supportX25519MLKEM768: Boolean? = null,
     ) {
         require(
             publicKey.isNotBlank() &&
@@ -227,6 +228,7 @@ internal object ProxyLinkParser {
                 .put("enabled", true)
                 .put("public_key", publicKey)
                 .put("short_id", shortId)
+        supportX25519MLKEM768?.let { reality.put("support_x25519mlkem768", it) }
         // Persist spider path for core consumers / future Reality spider support.
         // Empty and "/" are the Xray defaults (same behaviour).
         val spider = spiderX?.trim().orEmpty().ifEmpty { "/" }

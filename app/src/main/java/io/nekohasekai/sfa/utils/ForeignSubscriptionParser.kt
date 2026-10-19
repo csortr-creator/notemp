@@ -605,12 +605,13 @@ internal object ForeignSubscriptionParser {
                     )
                 }
             source.optJSONObject("reality-opts")?.let { reality ->
-                fields(reality, setOf("public-key", "short-id", "spider-x"))
+                fields(reality, setOf("public-key", "short-id", "spider-x", "support-x25519mlkem768"))
                 ProxyLinkParser.applyReality(
                     tls,
                     required(reality, "public-key"),
                     reality.optString("short-id"),
                     spiderX = reality.optString("spider-x").ifBlank { null },
+                    supportX25519MLKEM768 = if (reality.has("support-x25519mlkem768")) bool(reality, "support-x25519mlkem768") else null,
                     fingerprint = source.optString("client-fingerprint").ifBlank {
                         source.optString("fingerprint")
                     }.ifBlank { null },

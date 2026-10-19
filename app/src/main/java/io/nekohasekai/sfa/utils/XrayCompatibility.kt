@@ -21,6 +21,7 @@ internal object XrayCompatibility {
             "sni",
             "host",
             "fp",
+            "support-x25519mlkem768",
             "alpn",
             "allowInsecure",
             "pcs",
