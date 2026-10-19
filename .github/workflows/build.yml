@@ -159,6 +159,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          SFA_PATCH_TEST_CORE="$PWD/sing-box-core" python3 scripts/test_core_patches.py -v
           ./patch.sh
 
       - name: Test XHTTP wire compatibility

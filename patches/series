@@ -1,0 +1,25 @@
+# Ordered backports for sing-box v1.14.2. Shared by CI and local validation.
+sing-box-1.14.2-xhttp.patch
+sing-box-1.14.2-test-fixtures.patch
+sing-box-1.14.2-ping-completion.patch
+sing-box-1.14.2-probe-mode.patch
+sing-box-1.14.2-import-compatibility.patch
+sing-box-1.14.2-vless-encryption.patch
+sing-box-1.14.2-client-options.patch
+sing-box-1.14.2-rule-set-fallback.patch
+sing-box-1.14.2-reality-spider-x.patch
+sing-box-1.14.2-reality-mlkem.patch
+sing-box-1.14.2-finalmask-tcp-header.patch
+sing-box-1.14.2-subscription-compatibility.patch
+sing-box-1.14.2-reality-hybrid-option.patch
+sing-box-1.14.2-probe-failure-display.patch
+sing-box-1.14.2-reality-client-version.patch
+sing-box-1.14.2-reality-clock.patch
+sing-box-1.14.2-xhttp-authority.patch
+sing-box-1.14.2-reality-alpn.patch
+sing-box-1.14.2-reality-version-policy.patch
+sing-box-1.14.2-xhttp-http1-lifecycle.patch
+sing-box-1.14.2-xhttp-pending-close.patch
+sing-box-1.14.2-urltest-resilience.patch
+sing-box-1.14.2-subscription-http-bounds.patch
+sing-box-1.14.2-http-stream-bounds.patch

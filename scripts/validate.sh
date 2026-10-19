@@ -18,35 +18,6 @@ STATUS_FAIL=0
 STATUS_UNVERIFIED=0
 declare -a REPORT_LINES=()
 
-# Apply order follows patch.sh application sequence. Membership is checked
-# against patch.sh via assert_patch_list_matches_patch_sh().
-REQUIRED_CORE_PATCHES=(
-  sing-box-1.14.2-xhttp.patch
-  sing-box-1.14.2-test-fixtures.patch
-  sing-box-1.14.2-ping-completion.patch
-  sing-box-1.14.2-probe-mode.patch
-  sing-box-1.14.2-import-compatibility.patch
-  sing-box-1.14.2-vless-encryption.patch
-  sing-box-1.14.2-client-options.patch
-  sing-box-1.14.2-rule-set-fallback.patch
-  sing-box-1.14.2-reality-spider-x.patch
-  sing-box-1.14.2-reality-mlkem.patch
-  sing-box-1.14.2-finalmask-tcp-header.patch
-  sing-box-1.14.2-subscription-compatibility.patch
-  sing-box-1.14.2-reality-hybrid-option.patch
-  sing-box-1.14.2-probe-failure-display.patch
-  sing-box-1.14.2-reality-client-version.patch
-  sing-box-1.14.2-reality-clock.patch
-  sing-box-1.14.2-xhttp-authority.patch
-  sing-box-1.14.2-reality-alpn.patch
-  sing-box-1.14.2-reality-version-policy.patch
-  sing-box-1.14.2-xhttp-http1-lifecycle.patch
-  sing-box-1.14.2-xhttp-pending-close.patch
-  sing-box-1.14.2-urltest-resilience.patch
-  sing-box-1.14.2-subscription-http-bounds.patch
-  sing-box-1.14.2-http-stream-bounds.patch
-)
-
 usage() {
   cat <<'USAGE'
 Usage: scripts/validate.sh --parser|--core|--android|--all [--help]
@@ -117,40 +88,6 @@ run_gradle() {
   (cd "$ROOT" && bash ./gradlew "$@")
 }
 
-assert_patch_list_matches_patch_sh() {
-  local patch_sh="$ROOT/patch.sh"
-  if [[ ! -f "$patch_sh" ]]; then
-    record "core-patch-list" "FAIL" "patch.sh missing"
-    return 1
-  fi
-  local -A in_required=()
-  local -A in_sh=()
-  local p name line
-  for p in "${REQUIRED_CORE_PATCHES[@]}"; do
-    in_required["$p"]=1
-  done
-  while IFS= read -r line; do
-    if [[ "$line" =~ (sing-box-1\.14\.2-[a-z0-9-]+\.patch) ]]; then
-      name="${BASH_REMATCH[1]}"
-      in_sh["$name"]=1
-    fi
-  done < "$patch_sh"
-
-  for p in "${REQUIRED_CORE_PATCHES[@]}"; do
-    if [[ -z "${in_sh[$p]+x}" ]]; then
-      record "core-patch-list" "FAIL" "required $p not referenced in patch.sh"
-      return 1
-    fi
-  done
-  for name in "${!in_sh[@]}"; do
-    if [[ -z "${in_required[$name]+x}" ]]; then
-      record "core-patch-list" "FAIL" "patch.sh references $name but REQUIRED_CORE_PATCHES omits it"
-      return 1
-    fi
-  done
-  return 0
-}
-
 run_parser() {
   log "=== --parser (protocol-tests) ==="
   if ! need_java; then
@@ -172,44 +109,8 @@ run_parser() {
   fi
 }
 
-apply_one_patch() {
-  local core_dir="$1"
-  local path="$2"
-  local name="$3"
-
-  if [[ ! -f "$path" ]]; then
-    log "ERROR: required patch missing: $name"
-    return 1
-  fi
-
-  if git -C "$core_dir" apply --reverse --check "$path" >/dev/null 2>&1; then
-    log "Already applied: $name"
-    return 0
-  fi
-
-  if ! git -C "$core_dir" apply --check "$path"; then
-    log "ERROR: git apply --check failed: $name"
-    return 1
-  fi
-  if ! git -C "$core_dir" apply "$path"; then
-    log "ERROR: git apply failed: $name"
-    return 1
-  fi
-  log "Applied: $name"
-  return 0
-}
-
 apply_patches_isolated() {
-  local core_dir="$1"
-  local patches_dir="$ROOT/patches"
-  local p path
-  for p in "${REQUIRED_CORE_PATCHES[@]}"; do
-    path="$patches_dir/$p"
-    if ! apply_one_patch "$core_dir" "$path" "$p"; then
-      return 1
-    fi
-  done
-  return 0
+  python3 "$ROOT/scripts/apply_core_patches.py" "$1"
 }
 
 go_error_is_infra_only() {
@@ -231,10 +132,6 @@ run_core() {
   fi
   if [[ ! -d "$ROOT/patches" ]]; then
     record "core" "FAIL" "patches/ directory missing"
-    return
-  fi
-
-  if ! assert_patch_list_matches_patch_sh; then
     return
   fi
 

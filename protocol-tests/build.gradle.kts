@@ -66,6 +66,8 @@ tasks.test { useJUnit() }
 // Compile production adapters against a deterministic OS/JNI surface, confined to JVM tests.
 val syncPlatformAdapterSources by tasks.registering(Sync::class) {
     from("../app/src/main/java") {
+        include("io/nekohasekai/sfa/bg/ServiceBinder.kt")
+        include("io/nekohasekai/sfa/constant/Status.kt")
         include("io/nekohasekai/sfa/bg/DefaultNetworkListener.kt")
         include("io/nekohasekai/sfa/bg/DefaultNetworkMonitor.kt")
         include("io/nekohasekai/sfa/utils/RuleSetUpdater.kt")
