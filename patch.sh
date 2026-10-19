@@ -116,6 +116,15 @@ else
     git -C sing-box-core apply "$PWD/$REALITY_HYBRID_PATCH"
 fi
 
+# Retain failed probe results for display without admitting them to URLTest selection.
+PROBE_FAILURE_PATCH=patches/sing-box-1.14.2-probe-failure-display.patch
+if git -C sing-box-core apply --reverse --check "$PWD/$PROBE_FAILURE_PATCH" 2>/dev/null; then
+    echo "Probe failure display patch already applied"
+else
+    git -C sing-box-core apply --check "$PWD/$PROBE_FAILURE_PATCH"
+    git -C sing-box-core apply "$PWD/$PROBE_FAILURE_PATCH"
+fi
+
 # Получаем строку, где кончается класс HTTPClient
 LINE=$(grep -n "override fun close()" app/src/main/java/io/nekohasekai/sfa/utils/HTTPClient.kt | cut -d: -f1)
 

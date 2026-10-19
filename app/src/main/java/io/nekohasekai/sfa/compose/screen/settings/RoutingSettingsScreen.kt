@@ -286,20 +286,32 @@ fun RoutingSettingsScreen(navController: NavController, section: String = "overv
                     Modifier.padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    SuggestionChip(
-                        onClick = { navController.navigate("settings/routing/section/rules") },
+                    FilterChip(
+                        selected = finalOutbound == "proxy",
+                        onClick = {
+                            finalOutbound = "proxy"
+                            Settings.routingConfigJson = settingsObject(Settings.routingConfigJson).put("finalOutbound", "proxy").toString()
+                        },
                         label = { Text("Через VPN") },
-                        icon = { Icon(Icons.Outlined.Shield, null) },
+                        leadingIcon = { Icon(Icons.Outlined.Shield, null) },
                     )
-                    SuggestionChip(
-                        onClick = { navController.navigate("settings/routing/section/rules") },
+                    FilterChip(
+                        selected = finalOutbound == "direct",
+                        onClick = {
+                            finalOutbound = "direct"
+                            Settings.routingConfigJson = settingsObject(Settings.routingConfigJson).put("finalOutbound", "direct").toString()
+                        },
                         label = { Text("Напрямую") },
-                        icon = { Icon(Icons.Outlined.Public, null) },
+                        leadingIcon = { Icon(Icons.Outlined.Public, null) },
                     )
-                    SuggestionChip(
-                        onClick = { navController.navigate("settings/routing/section/rules") },
+                    FilterChip(
+                        selected = finalOutbound == "block",
+                        onClick = {
+                            finalOutbound = "block"
+                            Settings.routingConfigJson = settingsObject(Settings.routingConfigJson).put("finalOutbound", "block").toString()
+                        },
                         label = { Text("Блокировать") },
-                        icon = { Icon(Icons.Outlined.Block, null) },
+                        leadingIcon = { Icon(Icons.Outlined.Block, null) },
                     )
                 }
                 Text(

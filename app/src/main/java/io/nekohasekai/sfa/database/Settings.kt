@@ -52,6 +52,8 @@ object Settings {
 
     var outboundLatencyCache by dataStore.string("outbound_latency_cache") { "{}" }
 
+    var outboundSortByPing by dataStore.boolean("outbound_sort_by_ping") { true }
+
     var outboundSelections by dataStore.string("outbound_selections") { "{}" }
 
     var selectedProfile by dataStore.long(SettingsKey.SELECTED_PROFILE) { -1L }

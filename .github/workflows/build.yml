@@ -172,7 +172,7 @@ jobs:
           unzip -q /tmp/xray.zip -d /tmp/xray
           cd sing-box-core
           XHTTP_XRAY_BINARY=/tmp/xray/xray go test -race -timeout 5m \
-            -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./transport/v2rayxhttp ./transport/v2ray ./option ./experimental/libbox ./common/tls ./daemon ./common/urltest ./transport/vlessenc
+            -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./transport/v2rayxhttp ./transport/v2ray ./option ./experimental/libbox ./common/tls ./daemon ./common/urltest ./transport/vlessenc ./protocol/group
 
       - name: Test Reality with legacy and current Xray
         timeout-minutes: 10

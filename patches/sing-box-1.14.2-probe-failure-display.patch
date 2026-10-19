@@ -1,0 +1,279 @@
+--- a/common/urltest/urltest.go
++++ b/common/urltest/urltest.go
+@@ -19,14 +19,16 @@
+ )
+ 
+ type HistoryStorage struct {
+-	access       sync.RWMutex
+-	delayHistory map[string]*adapter.URLTestHistory
+-	updateHooks  []*observable.Subscriber[struct{}]
++	access         sync.RWMutex
++	delayHistory   map[string]*adapter.URLTestHistory
++	failureHistory map[string]*adapter.URLTestHistory
++	updateHooks    []*observable.Subscriber[struct{}]
+ }
+ 
+ func NewHistoryStorage() *HistoryStorage {
+ 	return &HistoryStorage{
+-		delayHistory: make(map[string]*adapter.URLTestHistory),
++		delayHistory:   make(map[string]*adapter.URLTestHistory),
++		failureHistory: make(map[string]*adapter.URLTestHistory),
+ 	}
+ }
+ 
+@@ -51,9 +53,31 @@
+ 	return s.delayHistory[tag]
+ }
+ 
++// Failed measurements are visible to clients but never eligible for auto-selection.
++func (s *HistoryStorage) LoadURLTestHistoryForDisplay(tag string) *adapter.URLTestHistory {
++	if s == nil {
++		return nil
++	}
++	s.access.RLock()
++	defer s.access.RUnlock()
++	if history := s.delayHistory[tag]; history != nil {
++		return history
++	}
++	return s.failureHistory[tag]
++}
++
++func (s *HistoryStorage) StoreURLTestFailure(tag string) {
++	s.access.Lock()
++	defer s.access.Unlock()
++	delete(s.delayHistory, tag)
++	s.failureHistory[tag] = &adapter.URLTestHistory{Time: time.Now()}
++	s.notifyUpdated()
++}
++
+ func (s *HistoryStorage) DeleteURLTestHistory(tag string) {
+ 	s.access.Lock()
+ 	delete(s.delayHistory, tag)
++	delete(s.failureHistory, tag)
+ 	s.notifyUpdated()
+ 	s.access.Unlock()
+ }
+@@ -61,6 +85,7 @@
+ func (s *HistoryStorage) StoreURLTestHistory(tag string, history *adapter.URLTestHistory) {
+ 	s.access.Lock()
+ 	s.delayHistory[tag] = history
++	delete(s.failureHistory, tag)
+ 	s.notifyUpdated()
+ 	s.access.Unlock()
+ }
+--- a/protocol/group/urltest.go
++++ b/protocol/group/urltest.go
+@@ -468,7 +468,7 @@
+ 						return nil, nil
+ 					}
+ 					b.logger.Debug("outbound ", tag, " unavailable: ", testResult.err)
+-					b.history.DeleteURLTestHistory(tag)
++					b.history.StoreURLTestFailure(tag)
+ 				} else {
+ 					b.logger.Debug("outbound ", tag, " available: ", testResult.delay, "ms")
+ 					b.history.StoreURLTestHistory(tag, &adapter.URLTestHistory{
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -612,7 +612,7 @@
+ 			var item GroupItem
+ 			item.Tag = itemTag
+ 			item.Type = itemOutbound.Type()
+-			if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, itemOutbound)); history != nil {
++			if history := historyStorage.LoadURLTestHistoryForDisplay(group.RealTag(boxService.outboundManager, itemOutbound)); history != nil {
+ 				item.UrlTestTime = history.Time.Unix()
+ 				item.UrlTestDelay = int32(history.Delay)
+ 			}
+@@ -755,7 +755,10 @@
+ 	} else {
+ 		t, err := urltest.URLTest(ctx, "", outbound)
+ 		if err != nil {
+-			historyStorage.DeleteURLTestHistory(outboundTag)
++			if ctx.Err() == nil {
++				historyStorage.StoreURLTestFailure(outboundTag)
++			}
++			return nil, err
+ 		} else {
+ 			historyStorage.StoreURLTestHistory(outboundTag, &adapter.URLTestHistory{
+ 				Time:  time.Now(),
+@@ -1195,7 +1197,7 @@
+ 					Tag:  ob.Tag(),
+ 					Type: ob.Type(),
+ 				}
+-				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ob)); history != nil {
++				if history := historyStorage.LoadURLTestHistoryForDisplay(group.RealTag(boxService.outboundManager, ob)); history != nil {
+ 					item.UrlTestTime = history.Time.Unix()
+ 					item.UrlTestDelay = int32(history.Delay)
+ 				}
+@@ -1206,7 +1208,7 @@
+ 					Tag:  ep.Tag(),
+ 					Type: ep.Type(),
+ 				}
+-				if history := historyStorage.LoadURLTestHistory(group.RealTag(boxService.outboundManager, ep)); history != nil {
++				if history := historyStorage.LoadURLTestHistoryForDisplay(group.RealTag(boxService.outboundManager, ep)); history != nil {
+ 					item.UrlTestTime = history.Time.Unix()
+ 					item.UrlTestDelay = int32(history.Delay)
+ 				}
+--- /dev/null
++++ b/common/urltest/sfa_probe_failure_display_test.go
+@@ -0,0 +1,28 @@
++package urltest
++
++import (
++	"github.com/sagernet/sing-box/adapter"
++	"testing"
++	"time"
++)
++
++func TestSFAProbeFailureDisplayCannotBecomeFastestOutbound(t *testing.T) {
++	history := NewHistoryStorage()
++	history.StoreURLTestHistory("node", &adapter.URLTestHistory{Time: time.Now(), Delay: 50})
++	history.StoreURLTestFailure("node")
++	if history.LoadURLTestHistory("node") != nil {
++		t.Fatal("failed result eligible for URLTest selection")
++	}
++	display := history.LoadURLTestHistoryForDisplay("node")
++	if display == nil || display.Time.IsZero() || display.Delay != 0 {
++		t.Fatal("failure is indistinguishable from an untested node")
++	}
++	history.StoreURLTestHistory("node", &adapter.URLTestHistory{Time: time.Now(), Delay: 70})
++	if got := history.LoadURLTestHistoryForDisplay("node"); got == nil || got.Delay != 70 {
++		t.Fatal("recovery did not replace failure")
++	}
++	history.DeleteURLTestHistory("node")
++	if history.LoadURLTestHistoryForDisplay("node") != nil {
++		t.Fatal("explicit reset kept old result")
++	}
++}
+--- /dev/null
++++ b/protocol/group/sfa_probe_failure_display_test.go
+@@ -0,0 +1,69 @@
++package group
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/urltest"
++	"github.com/sagernet/sing-box/log"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++type sfaDisplayProbeOutbound struct {
++	adapter.Outbound
++	tag     string
++	address string
++	failure string
++	calls   atomic.Int32
++}
++
++func (o *sfaDisplayProbeOutbound) Tag() string       { return o.tag }
++func (o *sfaDisplayProbeOutbound) Network() []string { return []string{"tcp"} }
++func (o *sfaDisplayProbeOutbound) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
++	o.calls.Add(1)
++	if o.failure == "timeout" {
++		<-ctx.Done()
++		return nil, ctx.Err()
++	}
++	if o.failure != "" {
++		return nil, errors.New(o.failure)
++	}
++	return (&net.Dialer{}).DialContext(ctx, "tcp", o.address)
++}
++
++func TestSFAProbeBatchReportsFailedNodesAndSelectsOnlySuccessfulNodes(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(5 * time.Millisecond); w.WriteHeader(204) }))
++	defer server.Close()
++	good := &sfaDisplayProbeOutbound{tag: "good", address: server.Listener.Addr().String()}
++	bad := &sfaDisplayProbeOutbound{tag: "bad", failure: "fixture handshake failure"}
++	slow := &sfaDisplayProbeOutbound{tag: "slow", failure: "timeout"}
++	nodes := []adapter.Outbound{bad, slow, good}
++	history := urltest.NewHistoryStorage()
++	history.StoreURLTestHistory("bad", &adapter.URLTestHistory{Time: time.Now(), Delay: 1})
++	ctx := urltest.WithProbeTimeout(context.Background(), 100)
++	result := URLTestOutbounds(ctx, nil, history, log.NewNOPFactory().Logger(), nodes, server.URL, 0, true)
++	if len(result) != 1 || result["good"] == 0 {
++		t.Fatalf("unexpected successful results: %v", result)
++	}
++	for _, node := range []*sfaDisplayProbeOutbound{good, bad, slow} {
++		if node.calls.Load() != 1 {
++			t.Fatalf("node %s was skipped or tested twice", node.tag)
++		}
++		display := history.LoadURLTestHistoryForDisplay(node.tag)
++		if display == nil || display.Time.IsZero() {
++			t.Fatalf("node %s has a blank result", node.tag)
++		}
++	}
++	group := &URLTestGroup{history: history, outbounds: nodes, selectedOutboundTCP: bad}
++	selected, _ := group.Select("tcp")
++	if selected == nil || selected.Tag() != "good" {
++		t.Fatal("failed low-latency node won auto-selection")
++	}
++}
+--- /dev/null
++++ b/daemon/sfa_probe_failure_display_test.go
+@@ -0,0 +1,37 @@
++package daemon
++
++import (
++	"context"
++	"github.com/sagernet/sing-box/common/urltest"
++	"testing"
++)
++
++func TestSFAProbeSingleRPCPublishesFailureAndDoesNotPublishCancellation(t *testing.T) {
++	for _, cancelled := range []bool{false, true} {
++		outbound := &sfaProbeOutbound{entered: make(chan struct{}), release: make(chan struct{})}
++		if !cancelled {
++			close(outbound.release)
++		}
++		history := urltest.NewHistoryStorage()
++		service := &StartedService{serviceStatus: &ServiceStatus{Status: ServiceStatus_STARTED}, instance: &Instance{
++			ctx: context.Background(), outboundManager: sfaProbeManager{outbound: outbound}, urlTestHistoryStorage: history,
++		}}
++		ctx, cancel := context.WithCancel(context.Background())
++		if cancelled {
++			cancel()
++		}
++		_, err := service.URLTest(ctx, &URLTestRequest{OutboundTag: "node"})
++		cancel()
++		display := history.LoadURLTestHistoryForDisplay("node")
++		if cancelled {
++			if err == nil || display != nil {
++				t.Fatal("cancelled probe published an unavailable result")
++			}
++		} else if err == nil || display == nil || display.Time.IsZero() || display.Delay != 0 {
++			t.Fatal("failed single probe is blank")
++		}
++		if history.LoadURLTestHistory("node") != nil {
++			t.Fatal("failed probe eligible for auto-selection")
++		}
++	}
++}
+--- a/daemon/sfa_urltest_test.go
++++ b/daemon/sfa_urltest_test.go
+@@ -72,14 +72,14 @@
+ 	close(outbound.release)
+ 	select {
+ 	case err := <-done:
+-		if err != nil {
+-			t.Fatal(err)
++		if err == nil {
++			t.Fatal("failed probe did not report its error")
+ 		}
+ 	case <-ctx.Done():
+ 		t.Fatal("RPC did not finish")
+ 	}
+-	if _, err := service.URLTest(ctx, &URLTestRequest{OutboundTag: "node"}); err != nil {
+-		t.Fatal(err)
++	if _, err := service.URLTest(ctx, &URLTestRequest{OutboundTag: "node"}); err == nil {
++		t.Fatal("failed probe did not report its error")
+ 	}
+ 	if outbound.calls.Load() != 2 {
+ 		t.Fatal("failed test kept lock after completion")

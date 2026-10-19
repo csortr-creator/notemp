@@ -146,6 +146,7 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         if (key == SettingsKey.SELECTED_PROFILE) refreshSelectedProfile(force = true)
+        if (key == "outbound_sort_by_ping") updateState { copy(sortByPing = Settings.outboundSortByPing) }
     }
 
     private fun stopProbe() {
@@ -232,7 +233,7 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
 
     private data class SessionTarget(val connect: Boolean, val remoteServerId: Long?)
 
-    override fun createInitialState() = GroupsUiState()
+    override fun createInitialState() = GroupsUiState(sortByPing = Settings.outboundSortByPing)
 
     override fun onCleared() {
         stopProbe()
@@ -310,7 +311,9 @@ class GroupsViewModel(private val sharedCommandClient: CommandClient? = null) :
     }
 
     fun toggleSortByPing() {
-        updateState { copy(sortByPing = !sortByPing) }
+        val enabled = !uiState.value.sortByPing
+        Settings.outboundSortByPing = enabled
+        updateState { copy(sortByPing = enabled) }
     }
 
     fun selectGroupItem(groupTag: String, itemTag: String) {
