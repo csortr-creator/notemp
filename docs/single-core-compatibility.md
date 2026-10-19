@@ -214,6 +214,12 @@ result code. It prints neither configs nor raw errors; reference Xray logging is
 disabled. No credentials or provider JSON are stored in Git or artifacts.
 Delete the temporary secret after the run. A skipped probe is not a provider PASS.
 
+For detailed diagnosis, the secret may instead contain an object with `nodes`
+and a base64 `report_public_key` (32-byte NaCl box public key). Errors have known
+node identifiers removed before anonymous sealed-box encryption. Only ciphertext
+is logged; keep the ephemeral private report key locally and discard it afterward.
+The redaction and encryption round trip has a synthetic regression test.
+
 The control fingerprints are diagnostic variants only; this does not change
 fingerprints or select fallback settings in the product. The runner's network
 can differ from the user's mobile network, and settings reconstructed from a

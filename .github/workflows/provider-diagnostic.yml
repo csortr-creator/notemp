@@ -52,4 +52,4 @@ jobs:
         run: |
           cp protocol-tests/provider/provider_smoke_test.go sing-box-core/common/tls/
           cd sing-box-core
-          go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProviderSmoke$' -v
+          go test -race -timeout 4m -ldflags=-checklinkname=0 -tags=with_quic,with_utls ./common/tls -run '^TestSFAProvider(Smoke|ReportRedaction)$' -v

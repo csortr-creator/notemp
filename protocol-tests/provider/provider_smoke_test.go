@@ -5,7 +5,9 @@ package tls_test
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	stdtls "crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/nacl/box"
 
 	"github.com/sagernet/sing-box/common/dialer"
 	btls "github.com/sagernet/sing-box/common/tls"
@@ -49,9 +53,32 @@ func TestSFAProviderSmoke(t *testing.T) {
 	if raw == "" {
 		t.Skip("provider diagnostic not requested")
 	}
+	var input struct {
+		Nodes           []providerNode `json:"nodes"`
+		ReportPublicKey string         `json:"report_public_key"`
+	}
 	var nodes []providerNode
-	if json.Unmarshal([]byte(raw), &nodes) != nil || len(nodes) == 0 || len(nodes) > 4 {
+	if strings.HasPrefix(strings.TrimSpace(raw), "[") {
+		if json.Unmarshal([]byte(raw), &nodes) != nil {
+			t.Fatal("invalid private diagnostic input")
+		}
+	} else {
+		if json.Unmarshal([]byte(raw), &input) != nil {
+			t.Fatal("invalid private diagnostic input")
+		}
+		nodes = input.Nodes
+	}
+	if len(nodes) == 0 || len(nodes) > 4 {
 		t.Fatal("invalid private diagnostic input")
+	}
+	var reportKey *[32]byte
+	if input.ReportPublicKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(input.ReportPublicKey)
+		if err != nil || len(decoded) != 32 {
+			t.Fatal("invalid report key")
+		}
+		reportKey = new([32]byte)
+		copy(reportKey[:], decoded)
 	}
 	binary := os.Getenv("SFA_PROVIDER_XRAY")
 	if binary == "" {
@@ -68,9 +95,49 @@ func TestSFAProviderSmoke(t *testing.T) {
 					stage, err := providerProbe(ctx, t, node, fp, engine, binary, target.address, target.path)
 					cancel()
 					t.Logf("SFA_PROVIDER_RESULT node=%d engine=%s fp=%s target=%s stage=%s code=%s", index, engine, fp, target.address, stage, providerErrorCode(err))
+					if err != nil && reportKey != nil {
+						report, encryptErr := providerEncryptedError(err, nodes, reportKey)
+						if encryptErr != nil {
+							t.Fatal("cannot encrypt diagnostic report")
+						}
+						t.Logf("SFA_PROVIDER_ENCRYPTED_ERROR node=%d engine=%s fp=%s target=%s data=%s", index, engine, fp, target.address, report)
+					}
 				}
 			}
 		}
+	}
+}
+
+func providerEncryptedError(err error, nodes []providerNode, publicKey *[32]byte) (string, error) {
+	message := err.Error()
+	for _, n := range nodes {
+		for _, value := range []string{n.UUID, n.PublicKey, n.ShortID, n.Server, n.SNI, n.Path} {
+			if value != "" && value != "/" {
+				message = strings.ReplaceAll(message, value, "[redacted]")
+			}
+		}
+	}
+	ciphertext, sealErr := box.SealAnonymous(nil, []byte(message), publicKey, rand.Reader)
+	return base64.StdEncoding.EncodeToString(ciphertext), sealErr
+}
+
+func TestSFAProviderReportRedaction(t *testing.T) {
+	publicKey, privateKey, err := box.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := providerNode{UUID: "private-uuid", PublicKey: "private-pbk", ShortID: "private-sid", Server: "private-server", SNI: "private-sni", Path: "/private-path"}
+	report, err := providerEncryptedError(fmt.Errorf("request to %s%s: %s %s %s %s: protocol error", n.Server, n.Path, n.UUID, n.PublicKey, n.ShortID, n.SNI), []providerNode{n}, publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := base64.StdEncoding.DecodeString(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, ok := box.OpenAnonymous(nil, sealed, publicKey, privateKey)
+	if !ok || strings.Contains(string(plain), "private-") || !strings.Contains(string(plain), "protocol error") {
+		t.Fatal("report did not preserve a redacted diagnostic")
 	}
 }
 

@@ -10,6 +10,8 @@ on:
       - 'v*'
     paths-ignore:
       - '**.md'
+      - 'protocol-tests/provider/**'
+      - '.github/workflows/provider-diagnostic.yml'
 
   workflow_dispatch:
     inputs:
