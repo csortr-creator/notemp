@@ -68,7 +68,7 @@ class ProfileImportHandler(private val context: Context) {
                         return@withContext importJsonConfiguration(dataString, filename)
                     }
                     return@withContext ImportResult.Error(
-                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                        io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
 
@@ -102,7 +102,7 @@ class ProfileImportHandler(private val context: Context) {
                         return@withContext UriParseResult.Success(name = filename)
                     }
                     return@withContext UriParseResult.Error(
-                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                        io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
 
@@ -128,7 +128,7 @@ class ProfileImportHandler(private val context: Context) {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext QRCodeParseResult.Error(
-                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                        io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
             }
@@ -150,7 +150,7 @@ class ProfileImportHandler(private val context: Context) {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext QRCodeParseResult.Error(
-                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                        io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
 
@@ -172,7 +172,7 @@ class ProfileImportHandler(private val context: Context) {
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     return@withContext ImportResult.Error(
-                        context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                        io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                     )
                 }
             }
@@ -190,7 +190,7 @@ class ProfileImportHandler(private val context: Context) {
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         return@withContext ImportResult.Error(
-                            context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                            io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                         )
                     }
                 importProfile(content)
@@ -209,7 +209,7 @@ class ProfileImportHandler(private val context: Context) {
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 return@withContext QRSParseResult.Error(
-                    context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                    io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                 )
             }
             QRSParseResult.Success(name = content.name)
@@ -226,7 +226,7 @@ class ProfileImportHandler(private val context: Context) {
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 return@withContext ImportResult.Error(
-                    context.getString(R.string.error_decode_profile, io.nekohasekai.sfa.utils.SubscriptionDiagnostics.reason(e)),
+                    io.nekohasekai.sfa.utils.ImportResultFormatter.creationFailure(e),
                 )
             }
             importProfile(content)
