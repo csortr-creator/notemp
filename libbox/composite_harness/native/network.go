@@ -20,7 +20,7 @@ type NetworkProvider interface {
 
 // LookupCancellation cancels platform DNS work, without blocking or reentering
 // the facade. It may be called from any thread, including after registration.
-type LookupCancellation interface{ Cancel() }
+type LookupCancellation interface{ CancelLookup() }
 
 type lookupResult struct {
 	addresses []netip.Addr
@@ -58,7 +58,7 @@ func (r *LookupRequest) OnCancel(callback LookupCancellation) error {
 	}
 	r.mu.Unlock()
 	if cancelled {
-		callback.Cancel()
+		callback.CancelLookup()
 	}
 	return nil
 }
@@ -74,7 +74,7 @@ func (r *LookupRequest) cancel() {
 	r.cancellation = nil
 	r.mu.Unlock()
 	if callback != nil {
-		callback.Cancel()
+		callback.CancelLookup()
 	}
 }
 

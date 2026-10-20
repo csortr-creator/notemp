@@ -1,15 +1,15 @@
 # Next gate: Android network ownership for Xray
 
-This is an implementation handoff, not a claim that Android protection is wired.
+This tracks the experimental JNI provider implementation and the remaining device gates.
 Keep the production executor selection unchanged until the device gates pass.
 
 ## Existing entry points
 
 - `libbox/xraybridge/bridge.go`: `StartProtected`, `UpdateNetwork`, `Stop` already
   own immutable network generations and retire DNS/dials/sockets before core Close.
-- `libbox/composite_harness/native/native.go`: the bound facade still exposes only
-  host `StartBridge`; it needs an explicit protected start/update API and a bound
-  provider interface. Never silently reinterpret host start as protected execution.
+- `libbox/composite_harness/native/native.go`: the bound facade exposes explicit
+  protected start/update operations alongside host `StartBridge`; `network.go`
+  defines the asynchronous provider API. Host start retains host-only semantics.
 - `app/src/main/java/io/nekohasekai/sfa/bg/DefaultNetworkMonitor.kt`: owns the live
   underlying network and guards stale listener registration. Its present listener
   belongs to Libbox; do not replace it with a second executor's listener.
@@ -83,3 +83,9 @@ AAR. The ordinary production AAR does not yet expose the composite package. No
 production service, network-monitor listener or executor choice has been changed.
 Device execution, lifecycle/handover wiring, process-global manager isolation and
 traffic/UDP/performance gates remain open. Compilation is not device evidence.
+
+Binding compatibility detail: LookupCancellation uses the specific method
+`CancelLookup`, not `Cancel`. Gomobile structurally implements matching Go
+interfaces on bound Libbox structs; a generic Cancel interface silently adds an
+implements clause to existing STUNTest/NetworkQualityTest Java APIs. CI500 caught
+this mismatch. Preserve the exact public API gate; do not normalize it away.

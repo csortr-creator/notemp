@@ -540,6 +540,16 @@ jobs:
           ./gradlew assembleOtherDebug -PverifyCompositeJni=true -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseG1GC" --stacktrace
       - name: Verify packaged JNI is the candidate, without duplicate libraries
         run: python3 scripts/verify_composite_apk.py dist/composite-arm64.aar app/build/outputs/apk/other/debug
+      - name: Preserve API mismatch diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composite-api-diagnostics-${{ github.sha }}
+          path: |
+            dist/composite-aar-check/libbox-expected-api.txt
+            dist/composite-aar-check/libbox-actual-api.txt
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: composite-arm64-aar-${{ github.sha }}

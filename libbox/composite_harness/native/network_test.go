@@ -30,7 +30,7 @@ type cancelHook struct {
 	done   chan struct{}
 }
 
-func (h *cancelHook) Cancel() {
+func (h *cancelHook) CancelLookup() {
 	if h.called.Add(1) == 1 && h.done != nil {
 		close(h.done)
 	}
