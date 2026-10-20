@@ -15,8 +15,11 @@ sibling bridge module. CI checks the exact core commit before applying patches.
 From this directory, with Go 1.27:
 
 ```sh
-go test -mod=readonly -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls -count=3 ./...
+go test -mod=readonly -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls -count=3 github.com/sagernet/sing-box/xraybridge ./...
 ```
+
+The bridge wire/protection tests are also run under this combined dependency
+graph; testing only the separate bridge module would miss dependency upgrades.
 
 This is a Linux host initialization/dependency proof. It does not create an
 Android AAR, exercise JNI, protect Android sockets, run a TUN, or establish a
