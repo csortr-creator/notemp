@@ -504,17 +504,18 @@ jobs:
           go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build the production reference using its actual builder
-        working-directory: sing-box-core
         run: |
-          go run ./cmd/internal/build_libbox -target android -platform android/arm64
-          mkdir -p ../dist
-          cp libbox.aar ../dist/libbox-api-reference.aar
+          mkdir -p dist
+          python3 scripts/mobile_bind_recorder.py install dist/mobile-bind-invocations.jsonl
+          (cd sing-box-core && go run ./cmd/internal/build_libbox -target android -platform android/arm64)
+          python3 scripts/mobile_bind_recorder.py restore
+          cp sing-box-core/libbox.aar dist/libbox-api-reference.aar
       - name: Build composite with the actual production feature contract
         working-directory: libbox/composite_harness
         env:
           GOFLAGS: -mod=readonly
         run: |
-          python3 ../../scripts/composite_android_contract.py build ../../dist/libbox-api-reference.aar ../../dist/composite-arm64.aar ../../dist/composite-build-contract.json
+          python3 ../../scripts/composite_android_contract.py build ../../dist/libbox-api-reference.aar ../../dist/composite-arm64.aar ../../dist/mobile-bind-invocations.jsonl ../../dist/composite-build-contract.json
           git diff --exit-code -- go.mod go.sum
           cp ../../xray-core/.notemp-source.json ../../dist/xray-source-provenance.json
       - name: Verify arm64 JNI and generated Java API
@@ -549,6 +550,7 @@ jobs:
             dist/composite-aar-check/libbox-public-api.txt
             dist/xray-source-provenance.json
             dist/composite-build-contract.json
+            dist/mobile-bind-invocations.jsonl
             app/build/outputs/apk/other/debug/*.apk
           if-no-files-found: error
           retention-days: 7
