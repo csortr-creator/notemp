@@ -31,3 +31,8 @@ all its Libbox classes and public Java signatures, JVM descriptors and constants
 Missing service/TUN APIs fail the build. The uploaded API report records the exact
 verified surface. This preserves the standalone reference surface; production
 Kotlin compilation and Android JNI loading are still separate integration gates.
+
+The reference uses the current experimental `with_quic,with_utls` tags and pinned
+upstream x/mobile generator. Matching it does not yet prove parity with production
+feature tags or the production SagerNet mobile generator. Compare those surfaces
+and compile the Android app against the candidate before replacing its dependency.
