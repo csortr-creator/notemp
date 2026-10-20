@@ -63,7 +63,7 @@ core, not the obsolete checked-in `libbox/go.mod`.
   The bridge suite is also repeated under this combined dependency graph, so its
   wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
-  detector and three repetitions. Local validation passed all22 bridge test
+  detector and three repetitions. Local validation passed all23 bridge test
   functions and three composite initializations. Do not report a new CI run as
   passed until it ends.
 
@@ -86,6 +86,18 @@ on source commit `f9847b4d4e511ec215fc78acd02acea808b3fbce`, including exported 
 checks and [artifact upload](https://github.com/csortr-creator/notemp/actions/runs/39389947689/artifacts/12249461293).
 This facade is not linked into production. An AAR build does not establish Android
 loading, protected sockets or VPN traffic.
+
+The CI488 artifact predates the Hysteria ownership/race fix.
+[CI490](https://github.com/csortr-creator/notemp/actions/runs/39393352721) passed
+on `c711fa29d29219675954bee1529977f7c9fb5bdf` with the checksum-pinned, locally
+patched Xray source. Its [AAR artifact](https://github.com/csortr-creator/notemp/actions/runs/39393352721/artifacts/12251475013)
+also contains prepared source provenance and actual ELF Go build metadata.
+The real host Hysteria regression verifies authenticated SOCKS TCP through
+certificate-verified QUIC/Salamander to an HTTP destination, explicit DNS/socket
+callbacks and denied protection. The adapter's old UDP wrapper panicked in this
+path; the upstream cleanup race is fixed under the existing session-manager lock.
+See `docs/xray-network-session.md` for the subprocess ownership boundary and the
+separate, still-unresolved upstream server certificate hot-reload race.
 
 ## Remaining integration gates
 
