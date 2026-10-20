@@ -17,6 +17,19 @@ release remain gated on the Android/runtime/device checks below.
 
 ## Verified checkpoint
 
+PR36 merged as `91d6866f36fcf22cec724e304c394c2d3d5423f9`.
+Latest reviewed code: PR36 `b6a2201` (owned dispatcher) and PR37 `40bffc5`
+(full Libbox binding/API gate). CI492's isolated native job passed; its separate
+ordinary APK job was still building at this checkpoint. CI493/run39402388375
+completed SUCCESS and artifact12256456399 was independently verified: 211 legacy
+Libbox classes, exact public API, actual arm64 ELF/JNI, both cores and the same
+prepared Xray source provenance. Archive digest and precise gates are recorded
+in XRAY_MIGRATION_PLAN.md. All25 bridge tests and the combined/native graph passed
+three race-enabled repetitions. Do not mistake the earlier facade-only AAR for
+the current complete-reference-API artifact. These gates do not enable Xray in APKs.
+
+Earlier checkpoints:
+
 - PR33 merged as `621ac1ea756b3e069f871f95a96f9aeb3b5f07de`: separate composite
   Android arm64 AAR and serialized JNI facade. This does not enable Xray in APKs.
 - PR34 merged as `d85eff6891b28b3e5964dc151f6edc150bd2fd16`: preserve Xray's
@@ -33,8 +46,8 @@ release remain gated on the Android/runtime/device checks below.
   Salamander, explicit DNS/socket callbacks and denied protection are covered.
   This is not SOCKS UDP relay or Android socket-protection evidence.
 - CI489 passed; [APK artifact12250108266](https://github.com/csortr-creator/notemp/actions/runs/39390790725/artifacts/12250108266)
-  uses sing-box in production. CI491/run39394300376 on merge `d85eff6` was still
-  running at the last check. Check it; do not assume success from this record.
+  uses sing-box in production. CI491/run39394300376 on merge `d85eff6` also
+  finished successfully (verified before this iteration).
 
 ## Reproduce the native checks
 
@@ -94,10 +107,11 @@ and Hysteria transport tests use StartProtected, explicit DNS and denied-socket
 controls. Run both standalone and combined dependency graphs with -race -count=3.
 Do not replace/reset the process hook in tests or add unowned direct fallback.
 
-Next: preserve the complete legacy Libbox Java API when building the composite
-AAR; the current native-only binding is not a drop-in application dependency.
-Then Android JNI loading, protect AND underlying-network bind, protected DNS and
-network handover; SOCKS UDP/required mask chains; executor selection for original
+Next: compare with production feature tags and SagerNet mobile generator, and
+compile the Android app against the candidate. The complete limited-tag Java API
+now matches its independently built standalone reference (211 classes); that is
+not yet production dependency/device proof. Then Android JNI loading, protect AND
+underlying-network bind, protected DNS and network handover; SOCKS UDP/required mask chains; executor selection for original
 import/runtime/probes; device/performance gates. Production still uses sing-box.
 
 ## Recover authorized API access

@@ -23,3 +23,16 @@ The gate checks host behavior, cross-compiles arm64 with QUIC/uTLS, validates th
 AAR's actual arm64 ELF and Java classes, and inspects exported JNI symbols. It
 uploads the AAR only after those checks pass. This is cross-build/JNI-generation
 evidence; Android device, socket protection and VPN runtime tests remain pending.
+
+The AAR now binds both `./native` and the complete pinned
+`github.com/sagernet/sing-box/experimental/libbox` package. The gate separately
+builds a legacy-only reference with the same sources/mobile compiler, and compares
+all its Libbox classes and public Java signatures, JVM descriptors and constants.
+Missing service/TUN APIs fail the build. The uploaded API report records the exact
+verified surface. This preserves the standalone reference surface; production
+Kotlin compilation and Android JNI loading are still separate integration gates.
+
+The reference uses the current experimental `with_quic,with_utls` tags and pinned
+upstream x/mobile generator. Matching it does not yet prove parity with production
+feature tags or the production SagerNet mobile generator. Compare those surfaces
+and compile the Android app against the candidate before replacing its dependency.

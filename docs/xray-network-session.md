@@ -79,3 +79,10 @@ does not accept TLS server inbounds. Production Xray activation remains gated.
 Remaining gates: attach the Android protector/network/resolver and JNI lifecycle,
 verify network replacement on device, and connect runtime/probe executor selection. A host callback test is not Android socket
 protection evidence and does not enable Xray in the production APK.
+
+The proven client fixtures have no Xray-managed DNS/routing or socket-option
+strategy. Upstream `internet.InitSystemDialer` still stores DNS/outbound managers
+in process globals, outside this socket dispatcher. Isolating those managers (or
+constraining the generated client config) is a separate gate before accepting
+arbitrary full Xray JSON in simultaneous runtime/probe instances. Do not infer
+that arbitrary upstream resolver/routing paths inherit this adapter automatically.

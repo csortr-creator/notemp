@@ -107,13 +107,47 @@ path; the upstream cleanup race is fixed under the existing session-manager lock
 See `docs/xray-network-session.md` for the subprocess ownership boundary and the
 separate, still-unresolved upstream server certificate hot-reload race.
 
+## Owned dispatcher and complete Java API — 20 October 2026
+
+[PR36](https://github.com/csortr-creator/notemp/pull/36) adds a permanent dispatcher,
+private per-Bridge identities, owned explicit host execution, StartProtected and
+serialized network replacement. Stop cancels pending DNS/dials and closes sockets
+before core Close. Missing/stopped contexts fail closed. Real SOCKS fixtures prove
+two independent owners for the same hostname, stale-context rejection after
+restart, network replacement and cancellation of a pending DNS request. XHTTP and
+Hysteria exchanges use the actual StartProtected path with explicit DNS and denied
+protection controls. All25 bridge tests passed with -race -count=3, standalone and
+in the actual combined graph. The isolated native job in
+[CI492](https://github.com/csortr-creator/notemp/actions/runs/39401850912) passed on
+`b6a22014e543649a896ed8b81965334569c2ee99`; the separate ordinary APK job was still
+building its unchanged production Libbox at the checkpoint, not yet a claimed pass.
+
+[PR37](https://github.com/csortr-creator/notemp/pull/37) binds the entire Libbox
+package alongside the facade. It builds a separate standalone reference using
+the same pinned sources/toolchain and compares every public Java signature, JVM
+descriptor and constant. Negative gate tests detect missing classes, changed
+return descriptors and changed inlined constants.
+[CI493](https://github.com/csortr-creator/notemp/actions/runs/39402388375) passed on
+`40bffc52b790c364ed1bebd036038625bbb691ab`, including race tests, both Android
+cross-builds, complete API comparison and actual JNI exports.
+[Artifact12256456399](https://github.com/csortr-creator/notemp/actions/runs/39402388375/artifacts/12256456399)
+was downloaded and independently checked: 211 Libbox classes, exact public API
+report, AArch64 ELF, Libbox and facade JNI symbols, both cores in Android/arm64
+build metadata and source provenance identical to the locally tested Xray tree.
+Archive SHA-256: `fd81bed576a29136f91fcd188dc6fa2a1bdbcd0412c2d96ad83b4e85f48ecba6`.
+The final documentation checkpoint may have a later SHA; no artifact is claimed
+to have been built from an untested documentation commit.
+
 ## Remaining integration gates
 
-1. The isolated AAR cross-build/export gate is complete. Verify JNI loading and
-   lifecycle on Android; cross-compilation is not device execution.
-2. Implement session-owned socket protection, underlying-network binding and DNS
-   in the Android/native owner, including cancellation and network replacement.
-   Never install an unowned global dialer or silently fall back to direct.
+1. Compare the candidate with the production SagerNet mobile generator and full
+   production feature tags, then compile the Android application against it.
+   CI493 proves parity with its limited-tag standalone reference, not production
+   package replacement, JNI loading or device execution.
+2. Attach session-owned Android socket protection AND underlying-network binding,
+   protected DNS and JNI lifecycle; verify cancellation and network handover.
+   Review upstream process-global DNS/outbound managers before admitting arbitrary
+   full Xray JSON in simultaneous runtime/probe instances (see network contract).
 3. Verify SOCKS UDP relay, domain handling and required mask chains end to end;
    the present fixtures cover only the stated TCP and UDP-manager subsets.
 4. Connect capable-executor selection to original imports, runtime and probes
