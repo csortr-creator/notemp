@@ -16,3 +16,7 @@ local.properties
 
 # Local Python validation helpers
 __pycache__/
+
+# Reproducible local Xray source prepared by scripts/prepare_xray_core.py
+/xray-core/
+/.xray-core-prepare-*/

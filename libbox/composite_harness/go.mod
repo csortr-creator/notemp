@@ -206,6 +206,8 @@ replace github.com/sagernet/sing-box => ../../sing-box-core
 
 replace github.com/sagernet/sing-box/xraybridge => ../xraybridge
 
+replace github.com/xtls/xray-core => ../../xray-core
+
 replace github.com/metacubex/utls => github.com/Leadaxe/utls-lx v1.8.8-0.20261011005638-ad69b191e2f8
 
 tool golang.org/x/mobile/cmd/gobind

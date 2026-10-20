@@ -11,6 +11,10 @@ The bridge now uses official Xray tag `v26.9.9`, commit
 `go get ...@v26.9.9` because this module does not have a `/v26` path. Resolving
 its actual commit produces the canonical pseudo-version and checksum pin.
 This source requires Go1.27, independently of the production Android build.
+It now additionally uses the reviewed local Hysteria close-race patch. Prepare
+`xray-core/` with `python3 scripts/prepare_xray_core.py` before either Go module.
+The source checksum, patch digest and full prepared source digests are verified;
+the Go module cache stays immutable. This is a patched pin, not an unmodified tag.
 
 The previous March pin has a reproducible race in XHTTP `WaitReadCloser.Set` /
 `Read`. Upstream fixed it in September (commits77f98eba andeef6e63b). Use the
