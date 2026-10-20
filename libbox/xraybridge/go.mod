@@ -1,5 +1,7 @@
 module github.com/sagernet/sing-box/xraybridge
 
+replace github.com/xtls/xray-core => ../../xray-core
+
 go 1.27
 
 require (

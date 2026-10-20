@@ -183,7 +183,13 @@ func (s *networkSession) Dial(ctx context.Context, src xnet.Address, dest xnet.D
 	epoch.connections[managed] = struct{}{}
 	s.mu.Unlock()
 	if packet, ok := conn.(net.PacketConn); ok {
-		return &sessionPacketConn{sessionConn: managed, packet: packet}, nil
+		// Xray's Hysteria transport requires this concrete wrapper, not merely
+		// net.PacketConn. Keep ownership/cancellation inside its packet layer so
+		// QUIC and mask consumers cannot bypass retirement by unwrapping it.
+		return &internet.PacketConnWrapper{
+			PacketConn: &sessionPacketConn{sessionConn: managed, packet: packet},
+			Dest:       conn.RemoteAddr(),
+		}, nil
 	}
 	return managed, nil
 }

@@ -15,6 +15,9 @@ To run the AAR gate, dispatch Build SFAxtnd with `isolated_aar_only=true` and
 jobs. It pins Go through the module, x/mobile tools through an exact version,
 NDK28.2.13676358 and Android35, and prepares the same pinned/ patched sing-box as
 the host proof. The artifact is `composite-arm64.aar`, separate from production.
+The Xray tree is prepared with `scripts/prepare_xray_core.py`: the same official
+module checksum plus the reviewed Hysteria close-race patch used by host tests.
+Artifacts include source provenance and actual ELF Go build metadata.
 
 The gate checks host behavior, cross-compiles arm64 with QUIC/uTLS, validates the
 AAR's actual arm64 ELF and Java classes, and inspects exported JNI symbols. It

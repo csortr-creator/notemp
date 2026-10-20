@@ -438,11 +438,15 @@ jobs:
           cache-dependency-path: |
             libbox/xraybridge/go.sum
             libbox/composite_harness/go.sum
+      - name: Prepare pinned Xray with the reviewed Hysteria race fix
+        env:
+          GOTOOLCHAIN: local
+        run: python3 scripts/prepare_xray_core.py
       - name: Test isolated bridge, wire masks and protected dialer
         working-directory: libbox/xraybridge
         env:
           GOTOOLCHAIN: local
-        run: go test -race -timeout 2m -count=3 ./...
+        run: go test -mod=readonly -race -timeout 2m -count=3 ./...
       - name: Prepare the actual pinned sing-box for composite proof
         shell: bash
         run: |
@@ -490,6 +494,7 @@ jobs:
           git clone --depth 1 --branch v1.14.2 https://github.com/SagerNet/sing-box.git sing-box-core
           test "$(git -C sing-box-core rev-parse HEAD)" = af6e64c3b69e6132ebaee0e1a3d24e93903f6709
           python3 scripts/apply_core_patches.py sing-box-core
+          python3 scripts/prepare_xray_core.py
       - name: Verify facade and both cores on host
         working-directory: libbox/composite_harness
         run: go test -mod=readonly -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls -count=3 github.com/sagernet/sing-box/xraybridge ./...
@@ -508,11 +513,13 @@ jobs:
           gomobile init
           gomobile bind -v -o ../../dist/composite-arm64.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 ./native
           git diff --exit-code -- go.mod go.sum
+          cp ../../xray-core/.notemp-source.json ../../dist/xray-source-provenance.json
       - name: Verify arm64 JNI and generated Java API
         run: |
           python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
           readelf --dyn-syms --wide dist/composite-aar-check/libgojni.so > dist/composite-aar-check/jni-symbols.txt
+          go version -m dist/composite-aar-check/libgojni.so > dist/composite-aar-check/go-build-info.txt
           for method in checkSingboxConfig startBridge stopBridge; do
             grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
           done
@@ -522,5 +529,7 @@ jobs:
           path: |
             dist/composite-arm64.aar
             dist/composite-aar-check/jni-symbols.txt
+            dist/composite-aar-check/go-build-info.txt
+            dist/xray-source-provenance.json
           if-no-files-found: error
           retention-days: 7

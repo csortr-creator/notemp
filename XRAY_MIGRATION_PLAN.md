@@ -11,6 +11,10 @@ The bridge now uses official Xray tag `v26.9.9`, commit
 `go get ...@v26.9.9` because this module does not have a `/v26` path. Resolving
 its actual commit produces the canonical pseudo-version and checksum pin.
 This source requires Go1.27, independently of the production Android build.
+It now additionally uses the reviewed local Hysteria close-race patch. Prepare
+`xray-core/` with `python3 scripts/prepare_xray_core.py` before either Go module.
+The source checksum, patch digest and full prepared source digests are verified;
+the Go module cache stays immutable. This is a patched pin, not an unmodified tag.
 
 The previous March pin has a reproducible race in XHTTP `WaitReadCloser.Set` /
 `Read`. Upstream fixed it in September (commits77f98eba andeef6e63b). Use the
@@ -59,7 +63,7 @@ core, not the obsolete checked-in `libbox/go.mod`.
   The bridge suite is also repeated under this combined dependency graph, so its
   wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
-  detector and three repetitions. Local validation passed all22 bridge test
+  detector and three repetitions. Local validation passed all23 bridge test
   functions and three composite initializations. Do not report a new CI run as
   passed until it ends.
 
@@ -82,6 +86,18 @@ on source commit `f9847b4d4e511ec215fc78acd02acea808b3fbce`, including exported 
 checks and [artifact upload](https://github.com/csortr-creator/notemp/actions/runs/39389947689/artifacts/12249461293).
 This facade is not linked into production. An AAR build does not establish Android
 loading, protected sockets or VPN traffic.
+
+The CI488 artifact predates the Hysteria ownership/race fix.
+[CI490](https://github.com/csortr-creator/notemp/actions/runs/39393352721) passed
+on `c711fa29d29219675954bee1529977f7c9fb5bdf` with the checksum-pinned, locally
+patched Xray source. Its [AAR artifact](https://github.com/csortr-creator/notemp/actions/runs/39393352721/artifacts/12251475013)
+also contains prepared source provenance and actual ELF Go build metadata.
+The real host Hysteria regression verifies authenticated SOCKS TCP through
+certificate-verified QUIC/Salamander to an HTTP destination, explicit DNS/socket
+callbacks and denied protection. The adapter's old UDP wrapper panicked in this
+path; the upstream cleanup race is fixed under the existing session-manager lock.
+See `docs/xray-network-session.md` for the subprocess ownership boundary and the
+separate, still-unresolved upstream server certificate hot-reload race.
 
 ## Remaining integration gates
 

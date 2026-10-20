@@ -12,6 +12,7 @@ import (
 	"time"
 
 	xnet "github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/transport/internet"
 )
 
 func sessionCallbacks() (socketProtector, domainResolver) {
@@ -205,10 +206,13 @@ func TestNetworkSessionUDPAndParentCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	packet, ok := conn.(net.PacketConn)
+	wrapper, ok := conn.(*internet.PacketConnWrapper)
 	if !ok {
-		t.Fatal("session owner hid UDP PacketConn interface")
+		t.Fatalf("session owner hid Xray's concrete UDP wrapper: %T", conn)
 	}
+	// Hysteria unwraps PacketConn before passing it to QUIC/masks. Ownership
+	// must still close that inner connection and reject stale writes.
+	packet := wrapper.PacketConn
 	if _, err = packet.WriteTo([]byte("udp"), server.LocalAddr()); err != nil {
 		t.Fatal(err)
 	}
