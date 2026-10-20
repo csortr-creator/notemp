@@ -47,6 +47,8 @@ core, not the obsolete checked-in `libbox/go.mod`.
 - `libbox/composite_harness` imports actual sing-box `experimental/libbox` and
   Xray in one graph, constructs sing-box while Xray runs, and closes both. This
   establishes host dependency/initialization compatibility, not a composite AAR.
+  The bridge suite is also repeated under this combined dependency graph, so its
+  wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
   detector and three repetitions. Local validation passed all16 bridge test
   functions and three composite initializations. Do not report a new CI run as

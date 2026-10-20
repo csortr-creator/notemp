@@ -3,18 +3,19 @@
 package vless
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestSFASalamanderXray(t *testing.T) {
 	port := reserve.LocalAddr().(*net.UDPAddr).Port
 	reserve.Close()
 	config := map[string]any{
-		"log": map[string]any{"loglevel": "none"},
+		"log": map[string]any{"loglevel": "warning"},
 		"inbounds": []any{map[string]any{
 			"listen": "127.0.0.1", "port": port, "protocol": "hysteria",
 			"settings": map[string]any{"version": 2, "users": []any{map[string]any{"auth": "proxy-password"}}},
@@ -71,39 +72,35 @@ func TestSFASalamanderXray(t *testing.T) {
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	logs := &sfaXrayStartupLog{ready: make(chan struct{})}
 	cmd := exec.Command(binary, "run", "-c", path)
+	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		select {
 		case <-done:
+			if t.Failed() {
+				t.Logf("Xray fixture output:\n%s", logs.String())
+			}
 		case <-time.After(3 * time.Second):
 			t.Error("Xray did not exit")
 		}
 	})
-	// Reserve readiness with a second bind, without sending invalid QUIC packets.
-	ready := false
-	for until := time.Now().Add(5 * time.Second); time.Now().Before(until); {
-		select {
-		case err := <-done:
-			done <- err
-			t.Fatalf("Xray exited: %v", err)
-		default:
-		}
-		probe, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			ready = true
-			break
-		}
-		probe.Close()
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !ready {
-		t.Fatal("Xray did not bind UDP")
+	// Never probe readiness by binding the server port: that probe can win the
+	// bind race and make Xray exit. A connected UDP client can also receive an
+	// immediate ICMP refusal before startup, so wait for Xray's own started event.
+	select {
+	case <-logs.ready:
+	case <-done:
+		t.Fatalf("Xray exited during startup: %v", waitErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Xray did not report successful startup")
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(origin.Certificate())
@@ -117,7 +114,12 @@ func TestSFASalamanderXray(t *testing.T) {
 		{"wrong-auth", "wrong-password", "mask-password", false, false, false},
 		{"wrong-mask", "proxy-password", "wrong-mask-password", false, false, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		passed := t.Run(tc.name, func(t *testing.T) {
+			select {
+			case <-done:
+				t.Fatalf("Xray exited before exchange: %v", waitErr)
+			default:
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 			defer cancel()
 			serverName := "127.0.0.1"
@@ -144,6 +146,11 @@ func TestSFASalamanderXray(t *testing.T) {
 					response.Body.Close()
 					t.Fatal("invalid authentication or mask accepted")
 				}
+				select {
+				case <-done:
+					t.Fatalf("Xray exited during negative exchange: %v", waitErr)
+				default:
+				}
 				return
 			}
 			if err != nil {
@@ -154,5 +161,36 @@ func TestSFASalamanderXray(t *testing.T) {
 				t.Fatalf("HTTPS status %d", response.StatusCode)
 			}
 		})
+		if !passed && tc.valid {
+			// A dead/unready server cannot establish negative-case rejection.
+			return
+		}
 	}
+}
+
+// Observe startup without opening or claiming the server's UDP endpoint.
+// os/exec may deliver the marker in multiple writes and both streams use this
+// writer; synchronization also permits safe diagnostic snapshots on failure.
+type sfaXrayStartupLog struct {
+	access sync.Mutex
+	buffer bytes.Buffer
+	ready  chan struct{}
+	once   sync.Once
+}
+
+func (l *sfaXrayStartupLog) Write(p []byte) (int, error) {
+	l.access.Lock()
+	defer l.access.Unlock()
+	n, err := l.buffer.Write(p)
+	output := l.buffer.Bytes()
+	if bytes.Contains(output, []byte("core: Xray ")) && bytes.Contains(output, []byte(" started")) {
+		l.once.Do(func() { close(l.ready) })
+	}
+	return n, err
+}
+
+func (l *sfaXrayStartupLog) String() string {
+	l.access.Lock()
+	defer l.access.Unlock()
+	return l.buffer.String()
 }
