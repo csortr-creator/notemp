@@ -511,17 +511,23 @@ jobs:
           set -euxo pipefail
           mkdir -p ../../dist
           gomobile init
-          gomobile bind -v -o ../../dist/composite-arm64.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 ./native
+          # Bind the complete service/TUN API together with the new facade.
+          gomobile bind -v -o ../../dist/composite-arm64.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 ./native github.com/sagernet/sing-box/experimental/libbox
+          # Same pinned sources/toolchain: independent legacy-only API reference.
+          gomobile bind -v -o ../../dist/libbox-api-reference.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 github.com/sagernet/sing-box/experimental/libbox
           git diff --exit-code -- go.mod go.sum
           cp ../../xray-core/.notemp-source.json ../../dist/xray-source-provenance.json
       - name: Verify arm64 JNI and generated Java API
         run: |
-          python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check
+          python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check dist/libbox-api-reference.aar
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
           readelf --dyn-syms --wide dist/composite-aar-check/libgojni.so > dist/composite-aar-check/jni-symbols.txt
           go version -m dist/composite-aar-check/libgojni.so > dist/composite-aar-check/go-build-info.txt
           for method in checkSingboxConfig startBridge stopBridge; do
             grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
+          done
+          for method in setup newCommandServer version; do
+            grep -F "Java_io_nekohasekai_libbox_Libbox_$method" dist/composite-aar-check/jni-symbols.txt
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -530,6 +536,7 @@ jobs:
             dist/composite-arm64.aar
             dist/composite-aar-check/jni-symbols.txt
             dist/composite-aar-check/go-build-info.txt
+            dist/composite-aar-check/libbox-public-api.txt
             dist/xray-source-provenance.json
           if-no-files-found: error
           retention-days: 7
