@@ -1,0 +1,293 @@
+diff --git a/transport/internet/dialer.go b/transport/internet/dialer.go
+--- a/transport/internet/dialer.go
++++ b/transport/internet/dialer.go
+@@ -79,12 +79,21 @@
+ 	return effectiveSystemDialer.DestIpAddress()
+ }
+ 
+-var (
+-	dnsClient dns.Client
+-	obm       outbound.Manager
+-)
+-
++// LookupForIP is the legacy context-free API. Core-owned paths use the
++// context-aware variant and never consult the legacy process default.
+ func LookupForIP(domain string, strategy DomainStrategy, localAddr net.Address) ([]net.IP, error) {
++	return LookupForIPContext(context.Background(), domain, strategy, localAddr)
++}
++
++func LookupForIPContext(ctx context.Context, domain string, strategy DomainStrategy, localAddr net.Address) ([]net.IP, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	features := systemDialerFeaturesFromContext(ctx)
++	if features == nil || features.dns == nil {
++		return nil, errors.New("DNS client not initialized for this context").AtError()
++	}
++	dnsClient := features.dns
+ 	if dnsClient == nil {
+ 		return nil, errors.New("DNS client not initialized").AtError()
+ 	}
+@@ -93,6 +102,12 @@
+ 		IPv4Enable: (localAddr == nil && strategy.PreferIP4()) || (localAddr != nil && localAddr.Family().IsIPv4() && (strategy.PreferIP4() || strategy.FallbackIP4())),
+ 		IPv6Enable: (localAddr == nil && strategy.PreferIP6()) || (localAddr != nil && localAddr.Family().IsIPv6() && (strategy.PreferIP6() || strategy.FallbackIP6())),
+ 	})
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	if systemDialerFeaturesFromContext(ctx) != features {
++		return nil, errors.New("system dialer owner retired")
++	}
+ 	{ // Resolve fallback
+ 		if (len(ips) == 0 || err != nil) && strategy.HasFallback() && localAddr == nil {
+ 			ips, _, err = dnsClient.LookupIP(domain, dns.IPOption{
+@@ -102,6 +117,12 @@
+ 		}
+ 	}
+ 
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	if systemDialerFeaturesFromContext(ctx) != features {
++		return nil, errors.New("system dialer owner retired")
++	}
+ 	if err == nil && len(ips) == 0 {
+ 		return nil, dns.ErrEmptyResponse
+ 	}
+@@ -253,7 +274,7 @@
+ 		if outboundName == "freedom" && dest.Network == net.Network_UDP && origTargetAddr != nil && src == nil {
+ 			finalStrategy = finalStrategy.GetDynamicStrategy(origTargetAddr.Family())
+ 		}
+-		ips, err := LookupForIP(dest.Address.Domain(), finalStrategy, src)
++		ips, err := LookupForIPContext(ctx, dest.Address.Domain(), finalStrategy, src)
+ 		if err != nil {
+ 			errors.LogErrorInner(ctx, err, "failed to resolve ip")
+ 			if sockopt.DomainStrategy.ForceIP() {
+@@ -268,10 +289,11 @@
+ 	}
+ 
+ 	if len(sockopt.DialerProxy) > 0 {
+-		if obm == nil {
++		features := systemDialerFeaturesFromContext(ctx)
++		if features == nil || features.obm == nil {
+ 			return nil, errors.New("there is no outbound manager for dialerProxy").AtError()
+ 		}
+-		h := obm.GetHandler(sockopt.DialerProxy)
++		h := features.obm.GetHandler(sockopt.DialerProxy)
+ 		if h == nil {
+ 			return nil, errors.New("there is no outbound handler for dialerProxy").AtError()
+ 		}
+@@ -282,6 +304,5 @@
+ }
+ 
+ func InitSystemDialer(dc dns.Client, om outbound.Manager) {
+-	dnsClient = dc
+-	obm = om
+-}
++	legacySystemDialerFeatures.Store(&systemDialerFeatures{dns: dc, obm: om})
++}
+diff --git a/core/xray.go b/core/xray.go
+--- a/core/xray.go
++++ b/core/xray.go
+@@ -187,6 +187,7 @@
+ }
+ 
+ func initInstanceWithConfig(config *Config, server *Instance) (bool, error) {
++	server.ctx = internet.ContextWithSystemDialerScope(server.ctx)
+ 	if err := platform.ReloadEnvSettings(); err != nil {
+ 		return true, errors.New("failed to reload environment settings").Base(err)
+ 	}
+@@ -227,13 +228,15 @@
+ 		}
+ 	}
+ 
+-	internet.InitSystemDialer(
++	if err := internet.InitSystemDialerContext(server.ctx,
+ 		server.GetFeature(dns.ClientType()).(dns.Client),
+ 		func() outbound.Manager {
+ 			obm, _ := server.GetFeature(outbound.ManagerType()).(outbound.Manager)
+ 			return obm
+ 		}(),
+-	)
++	); err != nil {
++		return true, err
++	}
+ 
+ 	server.resolveLock.Lock()
+ 	if server.pendingResolutions != nil {
+@@ -263,6 +266,7 @@
+ 	defer s.statusLock.Unlock()
+ 
+ 	s.running = false
++	internet.RetireSystemDialerContext(s.ctx)
+ 
+ 	var errs []interface{}
+ 	for _, f := range s.features {
+diff --git a/core/context.go b/core/context.go
+--- a/core/context.go
++++ b/core/context.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"github.com/xtls/xray-core/transport/internet"
+ )
+ 
+ // XrayKey is the key type of Instance in Context, exported for test.
+@@ -37,6 +38,7 @@
+ and may break at any time.
+ */
+ func toContext(ctx context.Context, v *Instance) context.Context {
++	ctx = internet.ContextWithSystemDialerScopeFrom(ctx, v.ctx)
+ 	if FromContext(ctx) != v {
+ 		ctx = context.WithValue(ctx, xrayKey, v)
+ 	}
+@@ -49,5 +51,5 @@
+ */
+ func ToBackgroundDetachedContext(ctx context.Context) context.Context {
+ 	instance := MustFromContext(ctx)
+-	return toContext(context.Background(), instance)
++	return toContext(context.WithoutCancel(instance.ctx), instance)
+ }
+diff --git a/app/proxyman/outbound/handler.go b/app/proxyman/outbound/handler.go
+--- a/app/proxyman/outbound/handler.go
++++ b/app/proxyman/outbound/handler.go
+@@ -184,7 +184,7 @@
+ 		if ob.Target.Network == net.Network_UDP && ob.OriginalTarget.Address != nil {
+ 			strategy = strategy.GetDynamicStrategy(ob.OriginalTarget.Address.Family())
+ 		}
+-		ips, err := internet.LookupForIP(ob.Target.Address.Domain(), strategy, nil)
++		ips, err := internet.LookupForIPContext(ctx, ob.Target.Address.Domain(), strategy, nil)
+ 		if err != nil {
+ 			errors.LogInfoInner(ctx, err, "failed to resolve ip for target ", ob.Target.Address.Domain())
+ 			if h.senderSettings.TargetStrategy.ForceIP() {
+diff --git a/proxy/freedom/freedom.go b/proxy/freedom/freedom.go
+--- a/proxy/freedom/freedom.go
++++ b/proxy/freedom/freedom.go
+@@ -294,7 +294,7 @@
+ 		if destination.Address.Family().IsDomain() {
+ 			if defaultRule != nil || len(h.finalRules) > 0 {
+ 				if strategy := h.resolveStrategy; strategy.HasStrategy() {
+-					ips, err := internet.LookupForIP(destination.Address.Domain(), strategy, outGateway)
++					ips, err := internet.LookupForIPContext(ctx, destination.Address.Domain(), strategy, outGateway)
+ 					if err != nil { // non-force may still dial with system DNS
+ 						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", destination.Address.Domain())
+ 						if strategy.ForceIP() {
+@@ -403,7 +403,7 @@
+ 				writer = buf.NewWriter(conn)
+ 			}
+ 		} else {
+-			writer = NewPacketWriter(conn, h, defaultRule, UDPOverride, destination, outGateway)
++			writer = newPacketWriter(ctx, conn, h, defaultRule, UDPOverride, destination, outGateway)
+ 			if h.config.Noises != nil {
+ 				errors.LogDebug(ctx, "NOISE", h.config.Noises)
+ 				writer = &NoisePacketWriter{
+@@ -533,6 +533,10 @@
+ 
+ // DialDest means the dial target used in the dialer when creating conn
+ func NewPacketWriter(conn net.Conn, h *Handler, defaultRule *FinalRule, UDPOverride net.Destination, DialDest net.Destination, outGateway net.Address) buf.Writer {
++	return newPacketWriter(context.Background(), conn, h, defaultRule, UDPOverride, DialDest, outGateway)
++}
++
++func newPacketWriter(ctx context.Context, conn net.Conn, h *Handler, defaultRule *FinalRule, UDPOverride net.Destination, DialDest net.Destination, outGateway net.Address) buf.Writer {
+ 	iConn := conn
+ 	statConn, ok := iConn.(*stat.CounterConnection)
+ 	if ok {
+@@ -550,6 +554,7 @@
+ 			resolvedUDPAddr.Store(DialDest.Address.Domain(), net.DestinationFromAddr(conn.RemoteAddr()).Address)
+ 		}
+ 		return &PacketWriter{
++			ctx:               ctx,
+ 			PacketConnWrapper: c,
+ 			Counter:           counter,
+ 			Handler:           h,
+@@ -563,6 +568,7 @@
+ }
+ 
+ type PacketWriter struct {
++	ctx context.Context
+ 	*internet.PacketConnWrapper
+ 	stats.Counter
+ 	*Handler
+@@ -599,7 +605,7 @@
+ 				} else {
+ 					shouldUseSystemResolver := true
+ 					if strategy := w.Handler.resolveStrategy; strategy.HasStrategy() {
+-						ips, err := internet.LookupForIP(b.UDP.Address.Domain(), strategy, w.OutGateway)
++						ips, err := internet.LookupForIPContext(w.ctx, b.UDP.Address.Domain(), strategy, w.OutGateway)
+ 						if err != nil {
+ 							// drop packet if resolve failed when forceIP
+ 							if strategy.ForceIP() {
+diff --git a/transport/internet/system_dialer_scope.go b/transport/internet/system_dialer_scope.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/system_dialer_scope.go
+@@ -0,0 +1,68 @@
++package internet
++
++import (
++	"context"
++	"errors"
++	"sync/atomic"
++
++	"github.com/xtls/xray-core/features/dns"
++	"github.com/xtls/xray-core/features/outbound"
++)
++
++type systemDialerScopeKey struct{}
++type systemDialerFeatures struct {
++	dns dns.Client
++	obm outbound.Manager
++}
++type systemDialerScope struct {
++	features atomic.Pointer[systemDialerFeatures]
++	retired  atomic.Bool
++}
++
++var legacySystemDialerFeatures atomic.Pointer[systemDialerFeatures]
++
++// ContextWithSystemDialerScope allocates one feature namespace per core instance.
++func ContextWithSystemDialerScope(ctx context.Context) context.Context {
++	return context.WithValue(ctx, systemDialerScopeKey{}, &systemDialerScope{})
++}
++
++// ContextWithSystemDialerScopeFrom binds caller context to the instance namespace.
++func ContextWithSystemDialerScopeFrom(ctx, owner context.Context) context.Context {
++	if scope, ok := owner.Value(systemDialerScopeKey{}).(*systemDialerScope); ok {
++		return context.WithValue(ctx, systemDialerScopeKey{}, scope)
++	}
++	return ctx
++}
++
++func InitSystemDialerContext(ctx context.Context, dc dns.Client, om outbound.Manager) error {
++	scope, ok := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope)
++	if !ok || scope.retired.Load() {
++		return errors.New("missing or retired system dialer owner")
++	}
++	features := &systemDialerFeatures{dns: dc, obm: om}
++	if !scope.features.CompareAndSwap(nil, features) {
++		return errors.New("system dialer owner already initialized")
++	}
++	if scope.retired.Load() {
++		scope.features.CompareAndSwap(features, nil)
++		return errors.New("system dialer owner retired during initialization")
++	}
++	return nil
++}
++
++func RetireSystemDialerContext(ctx context.Context) {
++	if scope, ok := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope); ok {
++		scope.retired.Store(true)
++		scope.features.Store(nil)
++	}
++}
++
++func systemDialerFeaturesFromContext(ctx context.Context) *systemDialerFeatures {
++	if scope, ok := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope); ok {
++		if scope.retired.Load() {
++			return nil
++		}
++		return scope.features.Load() // Never borrow a process default for an empty owner.
++	}
++	return legacySystemDialerFeatures.Load()
++}

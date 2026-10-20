@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the checksum-pinned Xray source plus the reviewed local race patch.
+"""Prepare the checksum-pinned Xray source plus reviewed local patches.
 
 The Go module cache stays immutable. Existing output is reused only when its
 recorded pin, patch and full source digests match; unknown output is preserved.
@@ -34,9 +34,11 @@ def prepare():
         raise RuntimeError("Xray module version differs from the reviewed source pin")
     checksum = next(line.split()[2] for line in (module_dir / "go.sum").read_text().splitlines()
                     if line.startswith(MODULE + " " + VERSION + " "))
-    patch = ROOT / "patches/xray-hysteria-session-close.patch"
+    patches = [ROOT / "patches" / name for name in (
+        "xray-hysteria-session-close.patch", "xray-instance-dialer-features.patch")]
     identity = {"module": MODULE, "version": VERSION, "sum": checksum,
-                "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest()}
+                "patches": [{"path": p.relative_to(ROOT).as_posix(),
+                             "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in patches]}
     output = ROOT / "xray-core"
     if output.exists() or output.is_symlink():
         if output.is_symlink() or not (output / STAMP).is_file():
@@ -61,11 +63,12 @@ def prepare():
         for directory in [tree, *(p for p in tree.rglob("*") if p.is_dir())]:
             directory.chmod(directory.stat().st_mode | stat.S_IWUSR)
         subprocess.run(["git", "init", "-q", str(tree)], check=True)
-        subprocess.run(["git", "apply", "--check", str(patch)], cwd=tree, check=True)
-        subprocess.run(["git", "apply", str(patch)], cwd=tree, check=True)
+        for patch in patches:
+            subprocess.run(["git", "apply", "--check", str(patch)], cwd=tree, check=True)
+            subprocess.run(["git", "apply", str(patch)], cwd=tree, check=True)
         (tree / STAMP).write_text(json.dumps({"identity": identity, "sources": source_hashes(tree)}, sort_keys=True))
         tree.rename(output)
-    print("Prepared checksum-pinned Xray source plus Hysteria close-race fix:", VERSION)
+    print("Prepared checksum-pinned Xray source plus reviewed race/isolation patches:", VERSION)
 
 
 if __name__ == "__main__":

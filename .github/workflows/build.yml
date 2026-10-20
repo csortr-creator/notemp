@@ -482,6 +482,7 @@ jobs:
           packages: platform-tools
       - name: Verify experimental network lifecycle before native builds
         run: |
+          python3 -m unittest discover -s scripts -p test_prepare_xray_core.py -v
           chmod +x gradlew
           ./gradlew -p protocol-tests test --tests "io.nekohasekai.sfa.bg.BridgeNetworkLifecycleTest" --stacktrace
       - name: Install pinned Android SDK and NDK

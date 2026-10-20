@@ -13,7 +13,7 @@ The replacements in this harness deliberately target the prepared core and the
 sibling bridge module. CI checks the exact core commit before applying patches.
 Also run `python3 scripts/prepare_xray_core.py` from the repository root. Both
 modules use that checksum-pinned Xray copy plus the reviewed Hysteria close-race
-patch; the module cache is never modified. See `docs/xray-network-session.md`.
+and instance-scoped DNS/outbound feature patches; the module cache is never modified. See `docs/xray-network-session.md`.
 
 From this directory, with Go 1.27:
 

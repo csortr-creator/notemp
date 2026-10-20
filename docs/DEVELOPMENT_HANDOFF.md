@@ -80,8 +80,9 @@ python3 scripts/prepare_xray_core.py
 
 The script downloads the exact official module version/checksum recorded in
 `libbox/xraybridge/go.mod` and `go.sum`, copies source into ignored `xray-core/`,
-and applies `patches/xray-hysteria-session-close.patch`. It never edits the Go
-module cache. It verifies source and patch digests when reusing the output and
+and applies the ordered `patches/xray-hysteria-session-close.patch` and
+`patches/xray-instance-dialer-features.patch` chain. It never edits the Go module
+cache. It verifies source and patch digests when reusing the output and
 rejects/preserves unknown or modified output. Do not remove those guards.
 
 Prepare `sing-box-core/` at upstream `v1.14.2`, exact commit
@@ -206,3 +207,10 @@ Repeated notifications for the same live Network do not replace its generation;
 a loss followed by recovery on that same Network does replace it. CI503 was
 cancelled after its JVM stage to verify this final adjustment in CI504 instead.
 No Android device JNI, connectivity/handover or production activation is claimed.
+
+Instance feature isolation work: patches/xray-instance-dialer-features.patch
+introduces context-scoped DNS/outbound pairs, explicit retirement, contextual DNS
+lookups and owner-preserving detached DNS. scripts/prepare_xray_core.py applies
+both reviewed patches and records their ordered hashes. Do not hand-edit a prepared
+core or the module cache. See docs/xray-instance-isolation.md for regression coverage
+and the remaining protected client-config/DNS-path and transport-cache audit gates.
