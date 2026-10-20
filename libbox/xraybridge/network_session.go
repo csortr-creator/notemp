@@ -21,8 +21,8 @@ type domainResolver func(context.Context, string) ([]netip.Addr, error)
 
 // networkSession owns one immutable callback generation at a time. Updating the
 // underlying network cancels old DNS/dials and closes its established sockets.
-// This private host-tested owner is NOT installed into Xray's global dialer and
-// is not an Android adapter: its caller must implement protection/binding/DNS.
+// The process dispatcher selects this owner by an unexported context identity.
+// It is not an Android adapter: its caller must implement protection/binding/DNS.
 type networkSession struct {
 	mu        sync.Mutex
 	parent    context.Context
@@ -34,7 +34,7 @@ type networkSession struct {
 type networkEpoch struct {
 	ctx         context.Context
 	cancel      context.CancelCauseFunc
-	dialer      protectedDialer
+	dialer      internet.SystemDialer
 	connections map[*sessionConn]struct{}
 	dials       map[*networkDial]struct{}
 }
@@ -42,11 +42,27 @@ type networkEpoch struct {
 type networkDial struct{ cancel context.CancelCauseFunc }
 
 func newNetworkSession(ctx context.Context, protect socketProtector, resolve domainResolver) (*networkSession, error) {
+	if protect == nil {
+		return nil, errProtectionRequired
+	}
+	if resolve == nil {
+		return nil, errResolverRequired
+	}
+	return newSessionWithDialer(ctx, &protectedDialer{protect: protect, resolve: resolve})
+}
+
+// Only the explicitly requested host executor uses Xray's host socket semantics.
+// Missing dispatcher identities never select this owner or the host network.
+func newHostNetworkSession(ctx context.Context) (*networkSession, error) {
+	return newSessionWithDialer(ctx, &internet.DefaultSystemDialer{})
+}
+
+func newSessionWithDialer(ctx context.Context, dialer internet.SystemDialer) (*networkSession, error) {
 	if ctx == nil {
 		return nil, errors.New("XRAY_CONTEXT_REQUIRED")
 	}
 	s := &networkSession{parent: ctx}
-	if err := s.Update(protect, resolve); err != nil {
+	if err := s.updateDialer(dialer); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -62,6 +78,10 @@ func (s *networkSession) Update(protect socketProtector, resolve domainResolver)
 	if resolve == nil {
 		return errResolverRequired
 	}
+	return s.updateDialer(&protectedDialer{protect: protect, resolve: resolve})
+}
+
+func (s *networkSession) updateDialer(dialer internet.SystemDialer) error {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -75,7 +95,7 @@ func (s *networkSession) Update(protect socketProtector, resolve domainResolver)
 	old := s.current
 	s.current = &networkEpoch{
 		ctx: ctx, cancel: cancel,
-		dialer:      protectedDialer{protect: protect, resolve: resolve},
+		dialer:      dialer,
 		connections: make(map[*sessionConn]struct{}),
 		dials:       make(map[*networkDial]struct{}),
 	}

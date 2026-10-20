@@ -24,14 +24,13 @@ import (
 
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf/serial"
-	"github.com/xtls/xray-core/transport/internet"
 	"golang.org/x/net/proxy"
 )
 
 const hysteriaSessionChild = "NOTEMP_HYSTERIA_SESSION_CHILD"
 
-// A subprocess owns the upstream global dialer for its entire lifetime. The
-// parent and other tests never install/reset a process-global networking hook.
+// The child uses the same permanent dispatcher and StartProtected as every
+// protected executor. Its callbacks are never installed process-wide.
 // This verifies the real Hysteria TCP-over-QUIC path, not SOCKS UDP or Android.
 func TestNetworkSessionHysteriaTransport(t *testing.T) {
 	if raw := os.Getenv(hysteriaSessionChild); raw != "" {
@@ -108,7 +107,7 @@ func TestNetworkSessionHysteriaTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := core.NewWithContext(context.Background(), cfg)
+	server, err := core.NewWithContext(ownedHostTestContext(t, context.Background()), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,32 +171,27 @@ func runHysteriaSessionChild(t *testing.T, raw string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	var protected, resolved atomic.Int32
-	s, err := newNetworkSession(ctx,
+	protect := socketProtector(
 		func(context.Context, string, uintptr) error {
 			protected.Add(1)
 			if fixture.Deny {
 				return fmt.Errorf("synthetic protection denied")
 			}
 			return nil
-		},
-		func(_ context.Context, domain string) ([]netip.Addr, error) {
-			if domain != "owner-fixture.invalid" {
-				return nil, fmt.Errorf("unexpected resolver target: %s", domain)
-			}
-			resolved.Add(1)
-			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
 		})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	internet.UseAlternativeSystemDialer(s) // Child-only, before any Xray instance/dial; never reset.
+	resolve := domainResolver(func(_ context.Context, domain string) ([]netip.Addr, error) {
+		if domain != "owner-fixture.invalid" {
+			return nil, fmt.Errorf("unexpected resolver target: %s", domain)
+		}
+		resolved.Add(1)
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	})
 	config, err := json.Marshal(fixture.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	bridge := NewBridge()
-	if err := bridge.Start(ctx, config); err != nil {
+	if err := bridge.StartProtected(ctx, config, protect, resolve); err != nil {
 		t.Fatal(err)
 	}
 	defer bridge.Stop()

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,10 +100,12 @@ func TestWireXHTTPHeaderMask(t *testing.T) {
 	for _, test := range []struct {
 		name, clientHeader string
 		wantExchange       bool
+		denyProtection     bool
 	}{
-		{"matching", "client-header", true},
-		{"wrong", "different-key", false},
-		{"missing", "", false},
+		{"matching", "client-header", true, false},
+		{"wrong", "different-key", false, false},
+		{"missing", "", false, false},
+		{"denied-protection", "client-header", false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -152,7 +157,7 @@ func TestWireXHTTPHeaderMask(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			instance, err := core.NewWithContext(ctx, cfg)
+			instance, err := core.NewWithContext(ownedHostTestContext(t, ctx), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -167,7 +172,7 @@ func TestWireXHTTPHeaderMask(t *testing.T) {
 				"inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": clientPort, "protocol": "socks",
 					"settings": map[string]any{"auth": "password", "accounts": []any{map[string]any{"user": "fixture", "pass": wirePassword}}}}},
 				"outbounds": []any{map[string]any{"protocol": "vless",
-					"settings": map[string]any{"vnext": []any{map[string]any{"address": "127.0.0.1", "port": port,
+					"settings": map[string]any{"vnext": []any{map[string]any{"address": "protected-xhttp.invalid", "port": port,
 						"users": []any{map[string]any{"id": "11111111-1111-1111-1111-111111111111", "encryption": "none"}}}}},
 					"streamSettings": wireStream(test.clientHeader)}},
 			}
@@ -181,7 +186,20 @@ func TestWireXHTTPHeaderMask(t *testing.T) {
 			}
 			assertWireMask(t, parsed.OutboundConfigs[0].StreamSetting, test.clientHeader)
 			bridge := NewBridge()
-			if err = bridge.Start(ctx, raw); err != nil {
+			var protected, resolved atomic.Int32
+			if err = bridge.StartProtected(ctx, raw, func(context.Context, string, uintptr) error {
+				protected.Add(1)
+				if test.denyProtection {
+					return errors.New("synthetic protection denial")
+				}
+				return nil
+			}, func(_ context.Context, host string) ([]netip.Addr, error) {
+				if host != "protected-xhttp.invalid" {
+					return nil, fmt.Errorf("unexpected domain %s", host)
+				}
+				resolved.Add(1)
+				return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+			}); err != nil {
 				t.Fatal(err)
 			}
 			defer bridge.Stop()
@@ -211,6 +229,17 @@ func TestWireXHTTPHeaderMask(t *testing.T) {
 				}
 			} else if readErr == nil || bytes.Equal(response, reply) {
 				t.Fatal("destination response crossed a wrong or absent mask")
+			}
+			if protected.Load() == 0 || resolved.Load() == 0 {
+				t.Fatalf("XHTTP missed protected DNS/socket callbacks: %d/%d", resolved.Load(), protected.Load())
+			}
+			if test.denyProtection {
+				// A rejection is meaningful only after the matching positive control.
+				select {
+				case <-served:
+					t.Fatal("denied socket reached destination")
+				default:
+				}
 			}
 			target.Close()
 		})
