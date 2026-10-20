@@ -1,15 +1,15 @@
 # Next gate: Android network ownership for Xray
 
-This is an implementation handoff, not a claim that Android protection is wired.
+This tracks the experimental JNI provider implementation and the remaining device gates.
 Keep the production executor selection unchanged until the device gates pass.
 
 ## Existing entry points
 
 - `libbox/xraybridge/bridge.go`: `StartProtected`, `UpdateNetwork`, `Stop` already
   own immutable network generations and retire DNS/dials/sockets before core Close.
-- `libbox/composite_harness/native/native.go`: the bound facade still exposes only
-  host `StartBridge`; it needs an explicit protected start/update API and a bound
-  provider interface. Never silently reinterpret host start as protected execution.
+- `libbox/composite_harness/native/native.go`: the bound facade exposes explicit
+  protected start/update operations alongside host `StartBridge`; `network.go`
+  defines the asynchronous provider API. Host start retains host-only semantics.
 - `app/src/main/java/io/nekohasekai/sfa/bg/DefaultNetworkMonitor.kt`: owns the live
   underlying network and guards stale listener registration. Its present listener
   belongs to Libbox; do not replace it with a second executor's listener.
@@ -60,3 +60,38 @@ bound boundary instead of reaching into private fields or using reflection.
 5. Wire original-import executor capability selection into both runtime and probes
    while preserving sing-box's TUN, DNS and user-routing ownership. Verify SOCKS UDP
    and required mask chains, then measure startup, transfer overhead and memory.
+
+## 2026-10-20: protected JNI boundary implementation
+
+The bound facade now has explicit `StartProtectedBridge(config, provider)` and
+`UpdateBridgeNetwork(provider)` operations. `NetworkProvider` supplies protection
+plus binding and asynchronous DNS. Each `LookupRequest` accepts exactly one result,
+validates numeric IPs, propagates cancellation through `LookupCancellation`, rejects
+late/duplicate completions and never falls back to system DNS. Provider methods must
+return promptly and must not reenter facade lifecycle methods; cancellation hooks
+must not block. Invalid provider/update operations fail closed.
+
+`app/src/compositeVerification/.../XrayNetworkProvider.kt` implements this contract
+against a captured non-VPN Android Network. It checks protect's boolean, binds a
+duplicate descriptor, uses Q+ DnsResolver/CancellationSignal and a bounded pre-Q
+worker pool. A pre-Q platform DNS call may ignore interruption; Stop still unblocks
+the Go owner and rejects its eventual reply. Four blocked workers can exhaust the
+legacy pool; excess requests fail instead of spawning unlimited threads.
+
+This source is compiled only with `-PverifyCompositeJni=true`, against the candidate
+AAR. The ordinary production AAR does not yet expose the composite package. No
+production service, network-monitor listener or executor choice has been changed.
+Device execution, lifecycle/handover wiring, process-global manager isolation and
+traffic/UDP/performance gates remain open. Compilation is not device evidence.
+
+Binding compatibility detail: LookupCancellation uses the specific method
+`CancelLookup`, not `Cancel`. Gomobile structurally implements matching Go
+interfaces on bound Libbox structs; a generic Cancel interface silently adds an
+implements clause to existing STUNTest/NetworkQualityTest Java APIs. CI500 caught
+this mismatch. Preserve the exact public API gate; do not normalize it away.
+
+CI501/run39436646595 passes on code 460e37158e5067508cd319e2a6bc2b10c48aebb0:
+complete production-feature AAR, unchanged Libbox public API, new JNI symbols,
+Android Kotlin compilation and exact packaged JNI identity. Independent artifact
+inspection also finds XrayNetworkProvider and NetworkProvider in APK DEX. This
+closes host/binding/compilation gates above; device and activation gates remain.

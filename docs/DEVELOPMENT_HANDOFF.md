@@ -167,3 +167,25 @@ to `/models` was checked. An attempted external source-code review was rejected
 by automatic approval review because service/token permission did not establish
 permission to transmit those source files. Do not retry or bypass that rejection
 without specific authorization. The completed code review/tests were local.
+
+### 2026-10-20 — protected JNI provider work
+
+`libbox/composite_harness/native/network.go` exposes NetworkProvider,
+LookupRequest and LookupCancellation; the facade adds StartProtectedBridge and
+UpdateBridgeNetwork. See docs/xray-android-network-adapter.md for callback rules.
+Android XrayNetworkProvider is currently in src/compositeVerification, included
+only by verifyCompositeJni=true. Keep ordinary runtime/executor selection unchanged
+until device tests and the remaining isolation/UDP/performance gates pass. No
+credentials belong in this handoff or any public repository file.
+
+PR39 verification: CI501 https://github.com/csortr-creator/notemp/actions/runs/39436646595
+passed for code `460e37158e5067508cd319e2a6bc2b10c48aebb0`; any later PR39
+commit updates documentation only. Artifact12271933250 includes the verification
+debug APK, whose DEX contains XrayNetworkProvider and NetworkProvider. Its JNI
+matches the candidate AAR byte for byte, SHA256
+`410f4dca3d04694c7f7dc8359b247647c8cf91ab677bb8553f3541854957acd0`.
+Host combined tests passed -race -count=3; renamed cancellation callback tests
+also passed -race -count=3. CI500 deliberately failed the existing API gate because
+Cancel structurally matched two Libbox classes; CancelLookup fixes the cause.
+Do not weaken this gate. The experimental Android provider is compiled but not
+connected to the production service. No phone networking/device test has run.

@@ -115,6 +115,10 @@ android {
     }
 
     sourceSets {
+        if (providers.gradleProperty("verifyCompositeJni").orNull == "true") {
+            // Compile the experimental protected provider only with its candidate AAR.
+            getByName("main").java.directories.add("src/compositeVerification/java")
+        }
         getByName("play") {
             java.directories.add("src/minApi24/java")
             aidl.directories.add("src/minApi24/aidl")

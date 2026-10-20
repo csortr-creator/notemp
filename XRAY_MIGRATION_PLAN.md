@@ -195,3 +195,22 @@ verifies its real-argv correction. CI492, 494 and495 also finished successfully.
 
 The earlier draft's concrete review is retained in
 `docs/xray-executor-review-2026-10-20.md`; PR32's corrections are merged.
+
+### 2026-10-20 — protected JNI network boundary
+
+Implemented owner-scoped asynchronous JNI DNS completion/cancellation and explicit
+protected facade start/network replacement. Added an immutable Android provider
+in the composite verification source set (protect + bind, Q+ cancellable DNS,
+bounded legacy DNS). Host regression tests cover denied protection, real SOCKS
+traffic, replacement closing sockets, pending DNS cancellation and stale replies.
+Production executor activation remains gated on real Android execution/handover,
+upstream global-manager isolation, UDP and performance verification.
+
+Validation for this gate: PR39, code `460e37158e5067508cd319e2a6bc2b10c48aebb0`,
+CI501/run39436646595 succeeded (full production-feature AAR, exact public Libbox
+API, new JNI methods, Android app compilation and packaged-native identity).
+Artifact12271933250 contains the verification debug APK. Independent archive
+inspection confirmed XrayNetworkProvider and the new JNI provider API in DEX,
+and exact AAR/APK native equality. No Android device execution is claimed.
+Next gate: lifecycle/handover integration and device execution, with upstream
+process-global DNS/outbound-manager isolation still required before activation.
