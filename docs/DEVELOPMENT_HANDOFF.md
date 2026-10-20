@@ -17,6 +17,17 @@ release remain gated on the Android/runtime/device checks below.
 
 ## Verified checkpoint
 
+Current work is PR38, branch `fix/composite-production-parity`. Code `1cb1b1c`
+replaces the limited-tag/upstream-mobile reference with the actual production
+builder and SagerNet gomobile v0.1.13. CI497 failed because Go redacts linker
+metadata under trimpath; the fix records real builder argv and delegates unchanged.
+CI498/run39430917424 is validating that fix, full feature/API parity and application
+packaging. Do not call the gate passed until the run finishes. The verification
+APK uses explicit `-PverifyCompositeJni=true` (arm64 only, native bytes preserved),
+with no production executor selection change or release. Next adapter contract:
+[Android network adapter](xray-android-network-adapter.md).
+
+
 PR36 merged as `91d6866f36fcf22cec724e304c394c2d3d5423f9`.
 Latest reviewed code: PR36 `b6a2201` (owned dispatcher) and PR37 `40bffc5`
 (full Libbox binding/API gate). CI492's isolated native job passed; its separate
