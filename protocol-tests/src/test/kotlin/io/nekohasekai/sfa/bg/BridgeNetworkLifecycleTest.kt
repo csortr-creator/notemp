@@ -36,6 +36,19 @@ class BridgeNetworkLifecycleTest {
         assertEquals(listOf("start:config:captured-wifi", "suspend", "update:captured-mobile", "stop"), backend.events)
     }
 
+    @Test fun repeatedNetworkNotificationsPreserveLiveConnections() {
+        val backend = Fake()
+        val state = BridgeNetworkLifecycle<String, String>({ it }, backend)
+        val token = state.begin("config")
+        state.network(token, "wifi")
+        repeat(100) { state.network(token, "wifi") }
+        assertEquals(listOf("start:config:wifi"), backend.events)
+        state.network(token, null)
+        state.network(token, "wifi")
+        assertEquals(listOf("start:config:wifi", "suspend", "update:wifi"), backend.events)
+        state.end(token)
+    }
+
     @Test fun staleCallbackOrStopCannotAffectReplacement() {
         val backend = Fake()
         val state = BridgeNetworkLifecycle<String, String>({ it }, backend)

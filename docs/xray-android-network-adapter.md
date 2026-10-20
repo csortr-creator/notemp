@@ -104,7 +104,8 @@ local listener and protected owner. No dial succeeds without a current network;
 Host-only bridges cannot use the protected suspend/update operations.
 
 `BridgeNetworkLifecycle` serializes desired configuration, native start/update,
-loss/suspend/recovery and Stop. Registration generations reject obsolete events
+loss/suspend/recovery and Stop. Repeated notifications for the same running network preserve live sockets.
+Registration generations reject obsolete events
 and Stop calls. Capture/start/update/suspend failures retire the owned bridge;
 subsequent valid network events can restart it. Its phase distinguishes waiting,
 running, suspended, failed and stopped; registering a listener is not connectivity.

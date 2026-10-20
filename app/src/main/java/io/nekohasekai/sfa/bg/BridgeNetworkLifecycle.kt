@@ -20,6 +20,7 @@ internal class BridgeNetworkLifecycle<N : Any, P : Any>(
     private var config: String? = null
     private var started = false
     private var suspended = false
+    private var currentNetwork: N? = null
 
     @Synchronized
     fun begin(value: String): Long {
@@ -45,6 +46,9 @@ internal class BridgeNetworkLifecycle<N : Any, P : Any>(
                 currentPhase = if (started) Phase.SUSPENDED else Phase.WAITING_FOR_NETWORK
                 return
             }
+            // Capability/link notifications may repeat the same Android Network.
+            // Preserve its sockets until loss, replacement or an actual failure.
+            if (started && !suspended && currentNetwork == network) return
             val provider = capture(network)
             if (started) backend.update(provider) else {
                 // Treat a partially failed start as owned, so catch always retires it.
@@ -52,6 +56,7 @@ internal class BridgeNetworkLifecycle<N : Any, P : Any>(
                 backend.start(current, provider)
             }
             suspended = false
+            currentNetwork = network
             currentPhase = Phase.RUNNING
         } catch (error: Exception) {
             currentPhase = Phase.FAILED
@@ -73,6 +78,7 @@ internal class BridgeNetworkLifecycle<N : Any, P : Any>(
         val wasStarted = started
         started = false
         suspended = false
+        currentNetwork = null
         if (wasStarted) backend.stop()
     }
 }
