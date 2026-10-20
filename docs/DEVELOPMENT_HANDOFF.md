@@ -17,6 +17,27 @@ release remain gated on the Android/runtime/device checks below.
 
 ## Verified checkpoint
 
+Latest completed gate: PR38, branch `fix/composite-production-parity`, tested code
+`1cb1b1cfea6059312b171af48e3229f9aab954a7`. CI498/run39430917424 completed SUCCESS.
+It uses the actual production Android builder and SagerNet gomobile v0.1.13,
+23 production feature tags, API 24 and libbox.so. Go redacts linker metadata under
+trimpath, so the recorder delegates unchanged and preserves actual bind argv.
+The complete 211-class Libbox Java API matched the production-built reference.
+The real otherDebug app assembled; packaging contains the exact candidate native
+bytes and no conflicting libgojni.so. Artifact12267684773 was downloaded and
+independently checked (ELF/JNI, public API, actual argv/feature tags, DEX, APK native
+identity, both cores and prepared Xray source provenance). Digests are in the plan.
+The verification APK uses explicit `-PverifyCompositeJni=true` (arm64 only, native
+bytes preserved). Ordinary builds retain their existing selection and packaging.
+No Android execution, production Xray activation or release is claimed.
+
+All 25 bridge tests and combined/native proof passed three race-enabled repetitions;
+4 Java API gate tests plus 7 build/packaging/recorder tests passed. Locally, 20
+sing-box XHTTP/Reality and virtual-host cases passed under the actual combined
+Go 1.27 module graph against the legacy v26.3.27 server (not a modern-server claim).
+CI492, 494 and495 also finished SUCCESS. Next concrete adapter contract:
+[Android network adapter](xray-android-network-adapter.md).
+
 PR36 merged as `91d6866f36fcf22cec724e304c394c2d3d5423f9`.
 Latest reviewed code: PR36 `b6a2201` (owned dispatcher) and PR37 `40bffc5`
 (full Libbox binding/API gate). CI492's isolated native job passed; its separate
@@ -24,7 +45,7 @@ ordinary APK job was still building at this checkpoint. CI493/run39402388375
 completed SUCCESS and artifact12256456399 was independently verified: 211 legacy
 Libbox classes, exact public API, actual arm64 ELF/JNI, both cores and the same
 prepared Xray source provenance. Archive digest and precise gates are recorded
-in XRAY_MIGRATION_PLAN.md. All25 bridge tests and the combined/native graph passed
+in XRAY_MIGRATION_PLAN.md. All 25 bridge tests and the combined/native graph passed
 three race-enabled repetitions. Do not mistake the earlier facade-only AAR for
 the current complete-reference-API artifact. These gates do not enable Xray in APKs.
 
@@ -51,7 +72,7 @@ Earlier checkpoints:
 
 ## Reproduce the native checks
 
-Use Go1.27. Prepare Xray from the repository root:
+Use Go 1.27. Prepare Xray from the repository root:
 
 ```sh
 python3 scripts/prepare_xray_core.py
@@ -107,12 +128,12 @@ and Hysteria transport tests use StartProtected, explicit DNS and denied-socket
 controls. Run both standalone and combined dependency graphs with -race -count=3.
 Do not replace/reset the process hook in tests or add unowned direct fallback.
 
-Next: compare with production feature tags and SagerNet mobile generator, and
-compile the Android app against the candidate. The complete limited-tag Java API
-now matches its independently built standalone reference (211 classes); that is
-not yet production dependency/device proof. Then Android JNI loading, protect AND
-underlying-network bind, protected DNS and network handover; SOCKS UDP/required mask chains; executor selection for original
-import/runtime/probes; device/performance gates. Production still uses sing-box.
+Next: implement the explicit protected JNI provider and immutable Android network
+callbacks described in xray-android-network-adapter.md. The production-feature AAR,
+Java API comparison and real app packaging gate are complete; JNI loading and
+protect/bind/DNS execution on Android are not. Then network handover, SOCKS UDP and
+required mask chains, original-import runtime/probe executor selection, and device/
+performance gates. Keep sing-box TUN/DNS/user-routing ownership intact.
 
 ## Recover authorized API access
 

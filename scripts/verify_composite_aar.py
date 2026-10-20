@@ -48,7 +48,7 @@ def verify_libbox_api(classes, reference_aar, destination):
 def verify(aar, destination, reference_aar):
     destination.mkdir(parents=True, exist_ok=True)
     with ZipFile(aar) as archive:
-        library = archive.read("jni/arm64-v8a/libgojni.so")
+        library = archive.read("jni/arm64-v8a/libbox.so")
         classes = archive.read("classes.jar")
         archive.read("AndroidManifest.xml")
     if library[:6] != b"\x7fELF\x02\x01" or struct.unpack_from("<H", library, 18)[0] != 183:
@@ -61,7 +61,7 @@ def verify(aar, destination, reference_aar):
             raise ValueError("Missing generated facade method: " + method.decode())
     if b"newExecutorFacade" not in factory:
         raise ValueError("Missing generated facade factory")
-    (destination / "libgojni.so").write_bytes(library)
+    (destination / "libbox.so").write_bytes(library)
     (destination / "classes.jar").write_bytes(classes)
     verify_libbox_api(classes, reference_aar, destination)
     print("Composite AAR: arm64 JNI and generated Java API present; device execution is unverified")

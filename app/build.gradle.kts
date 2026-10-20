@@ -134,7 +134,13 @@ android {
             isEnable = true
             isUniversalApk = true
             reset()
-            include("armeabi-v7a", "arm64-v8a")
+            if (providers.gradleProperty("verifyCompositeJni").orNull == "true") {
+                // The isolated candidate currently contains only arm64 JNI.
+                isUniversalApk = false
+                include("arm64-v8a")
+            } else {
+                include("armeabi-v7a", "arm64-v8a")
+            }
         }
     }
 
@@ -158,6 +164,10 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            if (providers.gradleProperty("verifyCompositeJni").orNull == "true") {
+                // Keep exact candidate bytes for the isolated packaging gate.
+                keepDebugSymbols += "**/libbox.so"
+            }
         }
     }
 
