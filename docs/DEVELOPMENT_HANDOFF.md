@@ -64,8 +64,10 @@ The actual workflow prepares both trees. Dispatch `.github/workflows/build.yml`
 with `isolated_aar_only=true`, `publish_release=false` for the separate AAR gate;
 it skips APK/release jobs. Normal `dev` pushes run the ordinary builds.
 
-The Hysteria regression changes the upstream global dialer only in a dedicated
-test subprocess. It is not an Android/production dispatcher implementation.
+The permanent dispatcher is installed once during package initialization.
+The Hysteria subprocess now uses StartProtected without replacing that hook.
+Host-owned raw Xray servers and protected client executors share the same dispatcher.
+This is not Android protection evidence.
 The immutable fixture certificate uses `oneTimeLoading=true`; a separate upstream
 server certificate hot-reload race is known and is not fixed by the closed-flag
 patch. Keep the race detector and TLS verification enabled.
@@ -75,23 +77,28 @@ patch. Keep the race detector and TLS verification enabled.
 Session `620463814939411899`:
 <https://jules.google.com/session/620463814939411899>
 
-Last observed state: `IN_PROGRESS`, no published PR. Task: an explicitly owned,
-protected Xray dispatcher integrated with Bridge lifecycle, with real domain,
-denial, concurrent-session, Stop/cancellation and network-replacement tests.
-Jules was notified of merge `d85eff6`, the required source preparation, and the
-Hysteria regression. Do not duplicate that task without checking its state.
+Codex took over the incomplete candidate on 20 October. Jules was asked to stop
+editing/creating a duplicate PR and provide findings. When reading activities,
+follow every nextPageToken: pageSize=100 is not necessarily the latest page.
 
-Early candidate installed a global dispatcher in `init` but registered no session
-for plain `Bridge.Start`; the existing SOCKS test reproduced EOF. An IP-only
-positive fixture did not establish DNS propagation. Those findings were sent to
-Jules. Do not merge that candidate blindly, install/reset global dialers on every
-Start/Stop, or add implicit direct fallback for unknown/stopped owners. Check the
-actual final diff and run legacy plus new wire tests in both dependency graphs.
+The reviewed implementation installs one permanent dispatcher during package init,
+registers private per-Bridge context identities, and rejects missing/stopped owners.
+Both explicit host Start and StartProtected have owned socket lifetimes; protected
+callbacks never fall back to the host path. Stop retires DNS/dials/sockets before
+core Close. UpdateNetwork is serialized with lifecycle. Startup errors clean up.
 
-Next: protected dispatcher ownership; Android JNI loading, protect/bind and DNS
-over the selected underlying network; network handover; SOCKS UDP/required mask
-chains; executor selection for import/runtime/probes; device/performance checks.
-Existing sing-box TUN/DNS/user-routing behavior must remain intact.
+New real SOCKS tests prove two simultaneous owners resolve the same hostname to
+different destinations, replace a network, reject stale/missing contexts and keep
+the other owner alive. Stop cancels an actual pending resolver call. Real XHTTP
+and Hysteria transport tests use StartProtected, explicit DNS and denied-socket
+controls. Run both standalone and combined dependency graphs with -race -count=3.
+Do not replace/reset the process hook in tests or add unowned direct fallback.
+
+Next: preserve the complete legacy Libbox Java API when building the composite
+AAR; the current native-only binding is not a drop-in application dependency.
+Then Android JNI loading, protect AND underlying-network bind, protected DNS and
+network handover; SOCKS UDP/required mask chains; executor selection for original
+import/runtime/probes; device/performance gates. Production still uses sing-box.
 
 ## Recover authorized API access
 

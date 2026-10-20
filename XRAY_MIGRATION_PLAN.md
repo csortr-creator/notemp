@@ -40,10 +40,11 @@ core, not the obsolete checked-in `libbox/go.mod`.
   packet and inspect the built mask config. Salamander is obfuscation rather than
   authentication: mismatches may produce garbage instead of an explicit rejection.
   This is not a SOCKS UDP / VLESS UDP / QUIC end-to-end test.
-- `protectedDialer` is a private adapter experiment. TCP/UDP and IP/domain fixtures
+- `protectedDialer` is a private session adapter. TCP/UDP and IP/domain fixtures
   verify socket callbacks, denied protection, resolver failure/cancellation,
-  invalid resolver output and unsupported options. There is no global setter or
-  reset API; no process-global Xray dialer is modified. It requires an explicit
+  invalid resolver output and unsupported options. One permanent dispatcher is
+  installed during package initialization; there is no per-instance global setter
+  or reset API. It requires an explicit
   resolver for domains, resolves before creating UDP sockets, and rejects socket
   options until their semantics are implemented. The future Android owner must
   protect and bind sockets AND provide DNS over the protected underlying network.
@@ -52,9 +53,16 @@ core, not the obsolete checked-in `libbox/go.mod`.
   the underlying network cancels registered DNS/dials synchronously and closes
   established sockets from that generation. Invalid updates preserve the current
   network; closing an old socket cannot close the replacement. UDP retains its
-  `net.PacketConn` interface. Six host regression tests cover replacement,
+  required concrete `internet.PacketConnWrapper`, with ownership inside it. Six host regression tests cover replacement,
   in-flight DNS/protection, parent cancellation, concurrent Update/Dial/Close and
-  invalid update rollback. This owner is not installed in Xray or Android yet.
+  invalid update rollback. The private context identity now selects this owner in
+  real Xray dials, with Bridge Stop/startup cleanup and network replacement. Two
+  simultaneous real SOCKS executors verify separate DNS/socket callbacks and
+  distinct replies for the same hostname, stale-owner rejection and independent
+  retirement. Stop cancels an actual blocked DNS request. Legacy host Start owns
+  its own sockets explicitly; unknown contexts never fall back to it. XHTTP and
+  Hysteria fixtures both use StartProtected with positive and denied protection.
+  Android callbacks are still not connected.
   See `docs/xray-network-session.md`.
 - `libbox/composite_harness` imports actual sing-box `experimental/libbox` and
   Xray in one graph, constructs sing-box while Xray runs, and closes both. This

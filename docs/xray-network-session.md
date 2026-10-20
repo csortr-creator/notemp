@@ -1,9 +1,19 @@
 # Xray network ownership contract
 
-`libbox/xraybridge/network_session.go` is a private Go building block. It is not
-installed in Xray's process-global system dialer or connected to Android JNI.
-It makes network retirement testable before those integrations.
+`libbox/xraybridge/dispatcher.go` installs one permanent Xray system dialer during
+package initialization, before any executor starts. It selects a registered
+`networkSession` by a private context identity. Missing, nil and stopped identities
+fail closed; a socket is never assigned to the currently active or newest Bridge.
+Stop removes the identity and cancels/closes its owner before calling core Close.
+All startup failures retire partially registered owners. UpdateNetwork is serialized
+with Start/Stop and only replaces callbacks on a live protected executor.
 
+`Bridge.StartProtected` requires explicit protection and DNS callbacks. The older
+`Bridge.Start` remains an explicitly requested host-only executor, with its own
+registered owner and Xray default socket semantics. It is not an Android entry
+point. Its availability never provides a fallback for unidentified protected dials.
+The owner tracks the host executor's sockets too; host DNS retains upstream host
+semantics. Android JNI/network callbacks are still not connected.
 A session receives an explicit socket protector and domain resolver. Each Update
 creates one immutable generation of these callbacks. The Android owner must later
 provide callbacks that protect and bind the socket to the selected underlying
@@ -38,9 +48,19 @@ TCP through Xray Hysteria2, certificate-verified QUIC and a Salamander mask to a
 HTTP destination with a distinct response. A synthetic domain must reach the
 explicit resolver; the socket callback must run. The denied-protection control
 must deliver no request to the destination, and runs only after positive success.
-The client owns the upstream global dialer in a dedicated test subprocess; the
-parent and other tests never change/reset that hook. This is not a production
-dispatcher, Android protection, SOCKS UDP relay or device test.
+The client uses `StartProtected` and the same permanent dispatcher; it does not
+replace the global hook. The subprocess still bounds the real QUIC fixture.
+Raw Xray server fixtures declare separate host owners. XHTTP additionally exercises
+protected domain resolution with a real header mask and an explicit denied-socket
+negative control after the positive exchange.
+
+`TestProtectedBridgeOwnersAndNetworkReplacement` starts two real SOCKS executors
+simultaneously. The same synthetic hostname/port reaches different loopback IPs
+and distinct replies using their respective resolver/protector callbacks. Updating
+one owner closes its old socket and reaches the new IP. Stop/restart rejects its
+old context, and the other executor keeps working. `TestProtectedBridgeStopCancelsPendingDNS`
+blocks an actual Xray resolver call and requires Stop to cancel it and release the
+SOCKS request promptly. These tests do not prove Android protection or SOCKS UDP.
 
 That real transport fixture also exposed an upstream race: Hysteria's cleanup
 loop read `udpSessionManager.closed` outside the mutex used by its writer. Prepare
@@ -56,7 +76,6 @@ certificate hot-reload ticker independently races its certificate slice; this
 fixture does not exercise hot reload, and no race detector is disabled. The bridge
 does not accept TLS server inbounds. Production Xray activation remains gated.
 
-Remaining gates: install one explicitly owned Xray dispatcher safely, attach the
-Android protector/network/resolver, verify network replacement on device and wire
-this owner into Bridge Stop/reload/probe. A host callback test is not Android socket
+Remaining gates: attach the Android protector/network/resolver and JNI lifecycle,
+verify network replacement on device, and connect runtime/probe executor selection. A host callback test is not Android socket
 protection evidence and does not enable Xray in the production APK.

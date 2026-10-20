@@ -20,8 +20,8 @@ var (
 	errSocketOptions      = errors.New("XRAY_SOCKET_OPTIONS_UNSUPPORTED")
 )
 
-// protectedDialer is an isolated adapter experiment, not installed into Xray's
-// process-global dialer. Android integration must supply session-owned callbacks
+// protectedDialer is selected by the permanent process dispatcher through its
+// session owner. Android integration must supply session-owned callbacks
 // which protect AND bind each socket to the current underlying network, and route
 // DNS over that protected network. There is deliberately no global reset API.
 // Non-nil socket options are rejected until their semantics are implemented.
