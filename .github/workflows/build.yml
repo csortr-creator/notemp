@@ -420,17 +420,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   xray-bridge-poc:
-    name: Xray bridge PoC (isolated)
+    name: Xray wire and composite proof (isolated)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: libbox/xraybridge/go.mod
-          cache-dependency-path: libbox/xraybridge/go.sum
-      - name: Test isolated bridge lifecycle and inbound policy
+          cache-dependency-path: |
+            libbox/xraybridge/go.sum
+            libbox/composite_harness/go.sum
+      - name: Test isolated bridge, wire masks and protected dialer
         working-directory: libbox/xraybridge
         env:
           GOTOOLCHAIN: local
         run: go test -race -timeout 2m -count=3 ./...
+      - name: Prepare the actual pinned sing-box for composite proof
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch v1.14.2 https://github.com/SagerNet/sing-box.git sing-box-core
+          test "$(git -C sing-box-core rev-parse HEAD)" = af6e64c3b69e6132ebaee0e1a3d24e93903f6709
+          python3 scripts/apply_core_patches.py sing-box-core
+      - name: Test both cores in one dependency graph
+        working-directory: libbox/composite_harness
+        env:
+          GOTOOLCHAIN: local
+        run: go test -mod=readonly -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls -count=3 github.com/sagernet/sing-box/xraybridge ./...
