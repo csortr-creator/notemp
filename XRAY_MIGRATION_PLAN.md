@@ -10,7 +10,7 @@ The bridge now uses official Xray tag `v26.9.9`, commit
 `v1.260327.1-0.20260908222543-52a412d9e2f5`. The tag cannot be used directly as
 `go get ...@v26.9.9` because this module does not have a `/v26` path. Resolving
 its actual commit produces the canonical pseudo-version and checksum pin.
-This source requires Go1.27, independently of the production Android build.
+This source requires Go 1.27, independently of the production Android build.
 It now additionally uses the reviewed local Hysteria close-race patch. Prepare
 `xray-core/` with `python3 scripts/prepare_xray_core.py` before either Go module.
 The source checksum, patch digest and full prepared source digests are verified;
@@ -71,7 +71,7 @@ core, not the obsolete checked-in `libbox/go.mod`.
   The bridge suite is also repeated under this combined dependency graph, so its
   wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
-  detector and three repetitions. Local validation passed all23 bridge test
+  detector and three repetitions. Local validation passed all 23 bridge test
   functions and three composite initializations. Do not report a new CI run as
   passed until it ends.
 
@@ -116,7 +116,7 @@ before core Close. Missing/stopped contexts fail closed. Real SOCKS fixtures pro
 two independent owners for the same hostname, stale-context rejection after
 restart, network replacement and cancellation of a pending DNS request. XHTTP and
 Hysteria exchanges use the actual StartProtected path with explicit DNS and denied
-protection controls. All25 bridge tests passed with -race -count=3, standalone and
+protection controls. All 25 bridge tests passed with -race -count=3, standalone and
 in the actual combined graph. The isolated native job in
 [CI492](https://github.com/csortr-creator/notemp/actions/runs/39401850912) passed on
 `b6a22014e543649a896ed8b81965334569c2ee99`; the separate ordinary APK job was still
@@ -138,16 +138,54 @@ Archive SHA-256: `fd81bed576a29136f91fcd188dc6fa2a1bdbcd0412c2d96ad83b4e85f48ecb
 The final documentation checkpoint may have a later SHA; no artifact is claimed
 to have been built from an untested documentation commit.
 
+## Production feature contract and application packaging — 20 October 2026
+
+[PR38](https://github.com/csortr-creator/notemp/pull/38) replaces the limited-tag
+reference with the real sing-box Android builder, restricted to arm64 but using
+its actual main-variant configuration and pinned SagerNet gomobile v0.1.13. The
+candidate inherits all 23 feature tags and linker settings from that invocation,
+including production runtime GODEBUG defaults. API 24 and the libbox.so JNI name
+match. Go omits linker flags from build metadata under trimpath: the recorder
+captures actual argv and delegates unchanged; tags are independently checked in
+ELF metadata. No manually duplicated feature list or invented metadata is used.
+
+[CI498](https://github.com/csortr-creator/notemp/actions/runs/39430917424) completed
+SUCCESS on `1cb1b1cfea6059312b171af48e3229f9aab954a7`. All 211 Libbox Java classes,
+public descriptors and constants matched the production-built reference. Actual
+Libbox and facade JNI exports passed. The real otherDebug app compiled and packaged
+with the candidate. The explicit verification-only Gradle flag restricts the build
+to arm64 and preserves exact native bytes; ordinary builds keep their prior ABI/
+packaging settings. The APK contains the tested native library and valid DEX,
+without a conflicting old libgojni.so. This is a test APK, not a production update
+or Android execution/traffic proof. Production still selects sing-box.
+
+[Artifact12267684773](https://github.com/csortr-creator/notemp/actions/runs/39430917424/artifacts/12267684773)
+was downloaded and independently verified: actual ELF/JNI, public API report,
+production argv and all 23 tags, API 24, both cores, Xray source provenance and exact
+APK native identity. Archive SHA-256:
+`f032007a71c39475dfa61e7c7155d1c7ee30c481aac76af2f364b7f83320ca4a`.
+Native libbox.so SHA-256:
+`6a21d4c4f3eb7f19cbe4222e085896edb3c3e40895ff796592b90746cd5fbb60`.
+The final documentation-only SHA can be newer than the tested code above.
+
+Validation also includes the combined bridge/native race suite with three
+repetitions and 11 Java API/contract/recorder/packaging test functions. Locally,
+20 existing sing-box PanelRealityXHTTP/virtual-host cases passed with -race in the
+actual Go 1.27 composite module graph against the v26.3.27 server, through read-only
+Go test overlays. The minClientVer case labels are not modern server versions.
+The initial CI497 metadata check failed on the known trimpath redaction; CI498
+verifies its real-argv correction. CI492, 494 and495 also finished successfully.
+
 ## Remaining integration gates
 
-1. Compare the candidate with the production SagerNet mobile generator and full
-   production feature tags, then compile the Android application against it.
-   CI493 proves parity with its limited-tag standalone reference, not production
-   package replacement, JNI loading or device execution.
-2. Attach session-owned Android socket protection AND underlying-network binding,
-   protected DNS and JNI lifecycle; verify cancellation and network handover.
+1. Execute JNI loading and lifecycle on Android. Production-feature API comparison
+   and application compilation/packaging are complete; these do not prove device
+   loading, working VPN traffic or production runtime activation.
+2. Implement the explicit protected JNI provider and session-owned Android socket
+   protection AND underlying-network binding, protected DNS and cancellation.
+   Verify network handover; see [the concrete adapter contract](docs/xray-android-network-adapter.md).
    Review upstream process-global DNS/outbound managers before admitting arbitrary
-   full Xray JSON in simultaneous runtime/probe instances (see network contract).
+   full Xray JSON in simultaneous runtime/probe instances.
 3. Verify SOCKS UDP relay, domain handling and required mask chains end to end;
    the present fixtures cover only the stated TCP and UDP-manager subsets.
 4. Connect capable-executor selection to original imports, runtime and probes

@@ -1,38 +1,29 @@
 # Experimental composite Android facade
 
-This package imports the real sing-box `experimental/libbox` and the isolated
-Xray bridge, exposing string/error lifecycle methods that gomobile can bind.
-It is not linked into the production app. StartBridge is an isolated experiment;
-Android socket protection, DNS/network ownership and TUN integration are not wired.
+This package binds the real sing-box experimental/libbox API alongside Xray's
+serialized facade. The facade's StartBridge remains an explicit host experiment.
+Protected JNI networking, Android execution and production executor selection
+are not connected by this build gate.
 
-The facade serializes calls, publishes state only after a successful start, and
-supports idempotent Stop and retry after failure. Host tests verify both engines,
-listener cleanup, duplicate starts and concurrent ownership. Generated Java/JNI
-bindings alone do not prove device execution or working VPN traffic.
+Dispatch Build SFAxtnd with isolated_aar_only=true and publish_release=false.
+The isolated job prepares pinned/patched sources, runs the combined/native race
+proof three times, and installs the production SagerNet mobile tools v0.1.13.
+It calls the actual sing-box Android builder for the arm64 reference, then derives
+the candidate's full 23-tag feature set and linker settings from actual bind argv.
+The recorder delegates unchanged. Go redacts linker metadata under trimpath;
+the report distinguishes recorded invocation flags from actual ELF metadata.
+Both use API 24 and libbox.so. No manual feature-list copy is required.
 
-To run the AAR gate, dispatch Build SFAxtnd with `isolated_aar_only=true` and
-`publish_release=false`. This selects the isolated AAR job and skips APK/release
-jobs. It pins Go through the module, x/mobile tools through an exact version,
-NDK28.2.13676358 and Android35, and prepares the same pinned/ patched sing-box as
-the host proof. The artifact is `composite-arm64.aar`, separate from production.
-The Xray tree is prepared with `scripts/prepare_xray_core.py`: the same official
-module checksum plus the reviewed Hysteria close-race patch used by host tests.
-Artifacts include source provenance and actual ELF Go build metadata.
+The gate compares every Libbox Java class, public JVM descriptor and constant,
+checks actual arm64 ELF/JNI and both cores, then assembles the real otherDebug
+application against the candidate. Verification-only -PverifyCompositeJni=true
+selects arm64 and preserves native bytes, allowing exact APK/AAR JNI comparison
+and rejecting a conflicting old runtime. Ordinary build settings stay the same.
+Artifacts include the AAR, debug test APK, public API, native build contract,
+recorded reference argv, Go build metadata and prepared Xray source provenance.
+This debug test APK is not a production update or device/traffic test.
 
-The gate checks host behavior, cross-compiles arm64 with QUIC/uTLS, validates the
-AAR's actual arm64 ELF and Java classes, and inspects exported JNI symbols. It
-uploads the AAR only after those checks pass. This is cross-build/JNI-generation
-evidence; Android device, socket protection and VPN runtime tests remain pending.
-
-The AAR now binds both `./native` and the complete pinned
-`github.com/sagernet/sing-box/experimental/libbox` package. The gate separately
-builds a legacy-only reference with the same sources/mobile compiler, and compares
-all its Libbox classes and public Java signatures, JVM descriptors and constants.
-Missing service/TUN APIs fail the build. The uploaded API report records the exact
-verified surface. This preserves the standalone reference surface; production
-Kotlin compilation and Android JNI loading are still separate integration gates.
-
-The reference uses the current experimental `with_quic,with_utls` tags and pinned
-upstream x/mobile generator. Matching it does not yet prove parity with production
-feature tags or the production SagerNet mobile generator. Compare those surfaces
-and compile the Android app against the candidate before replacing its dependency.
+CI498/run39430917424 passed on code 1cb1b1c, with 211 reference Libbox classes and
+an independently checked APK/native payload. See XRAY_MIGRATION_PLAN.md for exact
+artifact/source digests and docs/xray-android-network-adapter.md for the next JNI/
+protect/bind/DNS boundary. Preserve the race detector and TLS verification.
