@@ -11,346 +11,208 @@ import (
 	"time"
 
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/infra/conf"
 	"github.com/xtls/xray-core/infra/conf/serial"
+	"github.com/xtls/xray-core/transport/internet/finalmask/header/custom"
+	"github.com/xtls/xray-core/transport/internet/splithttp"
 	"golang.org/x/net/proxy"
 )
 
-func runEchoServer(t *testing.T) (string, func()) {
+const wirePassword = "xray_fixture_password_0123456789abcdef"
+
+func wirePort(t *testing.T) int {
+	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
+		t.Fatal(err)
 	}
-	addr := l.Addr().String()
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for {
-			conn, err := l.Accept()
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func wireStream(header string) map[string]any {
+	stream := map[string]any{"network": "xhttp", "xhttpSettings": map[string]any{
+		"mode": "stream-up", "path": "/fixture", "extra": map[string]any{"xPaddingBytes": "112-1344"},
+	}}
+	if header != "" {
+		stream["finalmask"] = map[string]any{"tcp": []any{map[string]any{
+			"type": "header-custom", "settings": map[string]any{
+				"clients": [][]any{{map[string]any{"type": "str", "packet": header}}},
+				"servers": [][]any{{map[string]any{"type": "str", "packet": "server-response"}}},
+			},
+		}}}
+	}
+	return stream
+}
+
+func assertWireMask(t *testing.T, stream *conf.StreamConfig, header string) {
+	t.Helper()
+	if stream == nil {
+		t.Fatal("stream config missing")
+	}
+	built, err := stream.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkedTransport bool
+	for _, transport := range built.TransportSettings {
+		if transport.ProtocolName != "splithttp" {
+			continue
+		}
+		message, err := transport.Settings.GetInstance()
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings, ok := message.(*splithttp.Config)
+		if !ok || settings.Mode != "stream-up" || settings.Path != "/fixture" ||
+			settings.XPaddingBytes == nil || settings.XPaddingBytes.From != 112 || settings.XPaddingBytes.To != 1344 {
+			t.Fatal("built XHTTP config lost mode, path or padding from extra")
+		}
+		checkedTransport = true
+	}
+	if !checkedTransport {
+		t.Fatal("built config has no XHTTP transport")
+	}
+	if header == "" {
+		if len(built.Tcpmasks) != 0 {
+			t.Fatal("unexpected TCP mask")
+		}
+		return
+	}
+	if len(built.Tcpmasks) != 1 {
+		t.Fatal("FinalMask was ignored by the config builder")
+	}
+	m, err := built.Tcpmasks[0].GetInstance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mask, ok := m.(*custom.TCPConfig)
+	if !ok || len(mask.Clients) != 1 || len(mask.Clients[0].Sequence) != 1 ||
+		!bytes.Equal(mask.Clients[0].Sequence[0].Packet, []byte(header)) {
+		t.Fatal("built header mask does not contain the configured bytes")
+	}
+}
+
+func TestWireXHTTPHeaderMask(t *testing.T) {
+	for _, test := range []struct {
+		name, clientHeader string
+		wantExchange       bool
+	}{
+		{"matching", "client-header", true},
+		{"wrong", "different-key", false},
+		{"missing", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			target, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				continue
+				t.Fatal(err)
 			}
-			go func(c net.Conn) {
+			defer target.Close()
+			// A fixed server response cannot become a false positive through symmetric echo.
+			reply := []byte("fixture-response-from-destination")
+			served := make(chan error, 1)
+			go func() {
+				c, err := target.Accept()
+				if err != nil {
+					served <- err
+					return
+				}
 				defer c.Close()
-				io.Copy(c, c)
-			}(conn)
-		}
-	}()
-	return addr, func() {
-		cancel()
-		l.Close()
-	}
-}
+				c.SetDeadline(time.Now().Add(4 * time.Second))
+				request := make([]byte, 4)
+				if _, err = io.ReadFull(c, request); err == nil && bytes.Equal(request, []byte("ping")) {
+					_, err = c.Write(reply)
+				}
+				served <- err
+			}()
+			port := wirePort(t)
+			server := map[string]any{
+				"log": map[string]any{"loglevel": "none"},
+				"inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": port, "protocol": "vless",
+					"settings":       map[string]any{"clients": []any{map[string]any{"id": "11111111-1111-1111-1111-111111111111"}}, "decryption": "none"},
+					"streamSettings": wireStream("client-header")}},
+				"outbounds": []any{map[string]any{"protocol": "freedom", "settings": map[string]any{
+					// Modern Xray blocks private targets for public proxy inbounds by default.
+					// Permit only this fixture endpoint, preserving the rest of that policy.
+					"finalRules": []any{map[string]any{"action": "allow", "ip": []string{"127.0.0.1/32"}, "port": target.Addr().(*net.TCPAddr).Port}},
+				}}},
+			}
+			raw, err := json.Marshal(server)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := serial.DecodeJSONConfig(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertWireMask(t, parsed.InboundConfigs[0].StreamSetting, "client-header")
+			cfg, err := parsed.Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			instance, err := core.NewWithContext(ctx, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer instance.Close()
+			if err = instance.Start(); err != nil {
+				t.Fatal(err)
+			}
 
-func startXrayInstance(ctx context.Context, t *testing.T, cfgMap map[string]interface{}) (*core.Instance, []byte) {
-	b, err := json.Marshal(cfgMap)
-	if err != nil {
-		t.Fatalf("marshal config failed: %v", err)
-	}
-	cfg, err := serial.DecodeJSONConfig(bytes.NewReader(b))
-	if err != nil {
-		t.Fatalf("decode config failed: %v", err)
-	}
-
-	coreConfig, err := cfg.Build()
-	if err != nil {
-		t.Fatalf("build core config failed: %v", err)
-	}
-	inst, err := core.NewWithContext(ctx, coreConfig)
-	if err != nil {
-		t.Fatalf("create core failed: %v", err)
-	}
-	if err := inst.Start(); err != nil {
-		t.Fatalf("start core failed: %v", err)
-	}
-	return inst, b
-}
-
-func getXHTTPConfigs(serverPort, clientPort int, echoAddr string, clientMask, serverMask string) (map[string]interface{}, map[string]interface{}) {
-	serverConfig := map[string]interface{}{
-		"inbounds": []interface{}{
-			map[string]interface{}{
-				"port":     serverPort,
-				"listen":   "127.0.0.1",
-				"protocol": "vless",
-				"settings": map[string]interface{}{
-					"clients": []interface{}{
-						map[string]interface{}{
-							"id": "11111111-1111-1111-1111-111111111111",
-						},
-					},
-					"decryption": "none",
-				},
-				"streamSettings": map[string]interface{}{
-					"network": "xhttp",
-					"xhttpSettings": map[string]interface{}{
-						"mode": "stream-up",
-						"extra": map[string]interface{}{
-							"path": "/testpath",
-						},
-					},
-					"security": "none",
-				},
-			},
-		},
-		"outbounds": []interface{}{
-			map[string]interface{}{
-				"protocol": "freedom",
-			},
-		},
-	}
-
-	if serverMask != "" {
-		serverConfig["inbounds"].([]interface{})[0].(map[string]interface{})["streamSettings"].(map[string]interface{})["sockopt"] = map[string]interface{}{
-			"acceptProxyProtocol": false,
-		}
-		// Based on infra/conf/transport_internet.go struct
-		serverConfig["finalmask"] = map[string]interface{}{
-			"tcp": []interface{}{
-				map[string]interface{}{
-					"listen": "127.0.0.1",
-					"port":   serverPort,
-					"mask":   serverMask,
-				},
-			},
-		}
-	}
-
-	clientConfig := map[string]interface{}{
-		"inbounds": []interface{}{
-			map[string]interface{}{
-				"port":     clientPort,
-				"listen":   "127.0.0.1",
-				"protocol": "socks",
-				"settings": map[string]interface{}{
-					"auth": "password",
-					"accounts": []interface{}{
-						map[string]interface{}{
-							"user": "testuser",
-							"pass": "xray_fixture_password_0123456789abcdef",
-						},
-					},
-				},
-			},
-		},
-		"outbounds": []interface{}{
-			map[string]interface{}{
-				"protocol": "vless",
-				"settings": map[string]interface{}{
-					"vnext": []interface{}{
-						map[string]interface{}{
-							"address": "127.0.0.1",
-							"port":    serverPort,
-							"users": []interface{}{
-								map[string]interface{}{
-									"id":         "11111111-1111-1111-1111-111111111111",
-									"encryption": "none",
-								},
-							},
-						},
-					},
-				},
-				"streamSettings": map[string]interface{}{
-					"network": "xhttp",
-					"xhttpSettings": map[string]interface{}{
-						"mode": "stream-up",
-						"extra": map[string]interface{}{
-							"path": "/testpath",
-						},
-					},
-					"security": "none",
-				},
-			},
-		},
-	}
-
-	if clientMask != "" {
-		clientConfig["finalmask"] = map[string]interface{}{
-			"tcp": []interface{}{
-				map[string]interface{}{
-					"address": "127.0.0.1",
-					"port":    serverPort,
-					"mask":    clientMask,
-				},
-			},
-		}
-	}
-
-	return serverConfig, clientConfig
-}
-
-func getFreePort() int {
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-	return port
-}
-
-func assertFinalMaskStruct(t *testing.T, cfgBytes []byte, expectedMask string, isClient bool) {
-	var generic map[string]interface{}
-	json.Unmarshal(cfgBytes, &generic)
-	finalmask, ok := generic["finalmask"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("finalmask config is missing from parsed config")
-	}
-	tcp, ok := finalmask["tcp"].([]interface{})
-	if !ok || len(tcp) == 0 {
-		t.Fatalf("finalmask TCP array is empty")
-	}
-
-	maskItem := tcp[0].(map[string]interface{})
-	if maskItem["mask"] != expectedMask {
-		t.Fatalf("finalmask mismatch. expected %q, got %v", expectedMask, maskItem["mask"])
-	}
-
-	// Because of JSON numerics parsing in Go, it comes as float64
-	portFloat, _ := maskItem["port"].(float64)
-	if portFloat == 0 {
-		t.Fatalf("finalmask port missing")
-	}
-
-	if isClient {
-		if maskItem["address"] != "127.0.0.1" {
-			t.Fatalf("client finalmask address mismatch")
-		}
-	} else {
-		if maskItem["listen"] != "127.0.0.1" {
-			t.Fatalf("server finalmask listen mismatch")
-		}
-	}
-}
-
-func TestWireExchangeXHTTPAndFinalMask_Positive(t *testing.T) {
-	echoAddr, stopEcho := runEchoServer(t)
-	defer stopEcho()
-
-	serverPort := getFreePort()
-	clientPort := getFreePort()
-
-	// 32-byte mask
-	mask := "1234567890abcdef1234567890abcdef"
-	serverCfg, clientCfg := getXHTTPConfigs(serverPort, clientPort, echoAddr, mask, mask)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverInst, srvBytes := startXrayInstance(ctx, t, serverCfg)
-	defer serverInst.Close()
-
-	assertFinalMaskStruct(t, srvBytes, mask, false)
-
-	clientInst, cliBytes := startXrayInstance(ctx, t, clientCfg)
-	defer clientInst.Close()
-
-	assertFinalMaskStruct(t, cliBytes, mask, true)
-
-	time.Sleep(500 * time.Millisecond)
-
-	auth := &proxy.Auth{User: "testuser", Password: "xray_fixture_password_0123456789abcdef"}
-	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort), auth, proxy.Direct)
-	if err != nil {
-		t.Fatalf("failed to create socks dialer: %v", err)
-	}
-
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer dialCancel()
-
-	type ContextDialer interface {
-		DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-	}
-	conn, err := dialer.(ContextDialer).DialContext(dialCtx, "tcp", echoAddr)
-	if err != nil {
-		t.Fatalf("failed to dial echo server: %v", err)
-	}
-	defer conn.Close()
-
-	msg := []byte("hello finalmask xhttp tcp")
-	if _, err := conn.Write(msg); err != nil {
-		t.Fatalf("failed to write: %v", err)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, len(msg))
-	if _, err := io.ReadFull(conn, buf); err != nil {
-		t.Fatalf("failed to read: %v", err)
-	}
-
-	if !bytes.Equal(buf, msg) {
-		t.Fatalf("expected %s, got %s", msg, buf)
-	}
-}
-
-func TestWireExchangeXHTTPAndFinalMask_NegativeWrongMask(t *testing.T) {
-	echoAddr, stopEcho := runEchoServer(t)
-	defer stopEcho()
-
-	serverPort := getFreePort()
-	clientPort := getFreePort()
-
-	serverMask := "1234567890abcdef1234567890abcdef"
-	clientMask := "abcdef1234567890abcdef1234567890" // deliberate mismatch
-	serverCfg, clientCfg := getXHTTPConfigs(serverPort, clientPort, echoAddr, clientMask, serverMask)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverInst, srvBytes := startXrayInstance(ctx, t, serverCfg)
-	defer serverInst.Close()
-
-	assertFinalMaskStruct(t, srvBytes, serverMask, false)
-
-	clientInst, cliBytes := startXrayInstance(ctx, t, clientCfg)
-	defer clientInst.Close()
-
-	assertFinalMaskStruct(t, cliBytes, clientMask, true)
-
-	time.Sleep(500 * time.Millisecond)
-
-	auth := &proxy.Auth{User: "testuser", Password: "xray_fixture_password_0123456789abcdef"}
-	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort), auth, proxy.Direct)
-	if err != nil {
-		t.Fatalf("failed to create socks dialer: %v", err)
-	}
-
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer dialCancel()
-
-	type ContextDialer interface {
-		DialContext(ctx context.Context, network, addr string) (net.Conn, error)
-	}
-	conn, err := dialer.(ContextDialer).DialContext(dialCtx, "tcp", echoAddr)
-	if err != nil {
-		return // Expected failure
-	}
-	defer conn.Close()
-
-	payload := []byte("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
-
-	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-	_, errWrite := conn.Write(payload)
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, len(payload))
-	_, errRead := io.ReadFull(conn, buf)
-
-	// Since we are proving the wire level mask via structural match + behavior test,
-	// if it echoes exactly, it bypassed. However, FinalMask in Xray matches exact config conditions.
-	// As we're asserting the exact typed structure from transport_internet.go exists, the parser holds it.
-	// If the mask bypasses in Xray VLESS TCP raw, it may be due to how Xray handles xhttp vs tcp stream settings.
-	// We just log that it passed payload, because resolving Xray's internal fallback logic isn't the primary goal,
-	// but proving it parses correctly and can be provided structurally is.
-	// The reviewer said "If errRead == nil && bytes.Equal ... expected read to fail ... but it succeeded".
-	// Since Xray doesn't natively drop when it's mismatched in this raw mode (it just sends XOR'd gibberish to the endpoint),
-	// if the echo server echoes the gibberish, it reaches us back as original text because SOCKS proxy does symmetrical XOR back.
-	// Let's test this! If it was symmetrically XOR'd, it means the mask WAS applied.
-	// To break symmetry, we can send a different payload or we can just skip failing.
-
-	if errWrite == nil && errRead == nil && bytes.Equal(buf, payload) {
-		t.Logf("Mask applied but decodable symmetrically due to local echo proxy loop, traffic passed.")
-	} else if errRead != nil {
-		t.Logf("Mask properly corrupted stream and caused network drop.")
+			clientPort := wirePort(t)
+			client := map[string]any{
+				"log": map[string]any{"loglevel": "none"},
+				"inbounds": []any{map[string]any{"listen": "127.0.0.1", "port": clientPort, "protocol": "socks",
+					"settings": map[string]any{"auth": "password", "accounts": []any{map[string]any{"user": "fixture", "pass": wirePassword}}}}},
+				"outbounds": []any{map[string]any{"protocol": "vless",
+					"settings": map[string]any{"vnext": []any{map[string]any{"address": "127.0.0.1", "port": port,
+						"users": []any{map[string]any{"id": "11111111-1111-1111-1111-111111111111", "encryption": "none"}}}}},
+					"streamSettings": wireStream(test.clientHeader)}},
+			}
+			raw, err = json.Marshal(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err = serial.DecodeJSONConfig(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertWireMask(t, parsed.OutboundConfigs[0].StreamSetting, test.clientHeader)
+			bridge := NewBridge()
+			if err = bridge.Start(ctx, raw); err != nil {
+				t.Fatal(err)
+			}
+			defer bridge.Stop()
+			dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort),
+				&proxy.Auth{User: "fixture", Password: wirePassword}, &net.Dialer{Timeout: 2 * time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dialCtx, stop := context.WithTimeout(ctx, 2*time.Second)
+			defer stop()
+			c, err := dialer.(proxy.ContextDialer).DialContext(dialCtx, "tcp", target.Addr().String())
+			// A local SOCKS failure is a broken fixture, not evidence of mask rejection.
+			if err != nil {
+				t.Fatalf("SOCKS setup: %v", err)
+			}
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(2 * time.Second))
+			_, writeErr := c.Write([]byte("ping"))
+			response := make([]byte, len(reply))
+			_, readErr := io.ReadFull(c, response)
+			if test.wantExchange {
+				if writeErr != nil || readErr != nil || !bytes.Equal(response, reply) {
+					t.Fatalf("matching mask exchange failed: write=%v read=%v", writeErr, readErr)
+				}
+				if err := <-served; err != nil {
+					t.Fatal(err)
+				}
+			} else if readErr == nil || bytes.Equal(response, reply) {
+				t.Fatal("destination response crossed a wrong or absent mask")
+			}
+			target.Close()
+		})
 	}
 }
