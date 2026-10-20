@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestBridgeXrayFeatures provides a structural verification for
-// XHTTP stream-up and FinalMask functionalities. Due to the lack of
+// TestBridgeXrayFeatures checks XHTTP config startup only.
+// It is not a data-plane or FinalMask interoperability test. Due to the lack of
 // existing functional local XHTTP endpoints in test, this test verifies
 // that the configs are parsed correctly and bridge spins up/down
 // cleanly without config errors on those specific features.
@@ -20,7 +20,8 @@ func TestBridgeXrayFeatures(t *testing.T) {
 				"listen":   "127.0.0.1",
 				"protocol": "socks",
 				"settings": map[string]interface{}{
-					"auth": "noauth",
+					"auth":     "password",
+					"accounts": []interface{}{map[string]interface{}{"user": "fixture", "pass": "xray_fixture_password_0123456789abcdef"}},
 				},
 			},
 		},
@@ -66,7 +67,8 @@ func TestBridgeXrayFeatures(t *testing.T) {
 	}
 }
 
-func TestBridgeFinalMask(t *testing.T) {
+// This fixture contains no FinalMask. Passing startup is not a mask wire proof.
+func TestBridgeTCPDialerProxyConfigSmoke(t *testing.T) {
 	b := NewBridge()
 	config := map[string]interface{}{
 		"inbounds": []interface{}{
@@ -75,7 +77,8 @@ func TestBridgeFinalMask(t *testing.T) {
 				"listen":   "127.0.0.1",
 				"protocol": "socks",
 				"settings": map[string]interface{}{
-					"auth": "noauth",
+					"auth":     "password",
+					"accounts": []interface{}{map[string]interface{}{"user": "fixture", "pass": "xray_fixture_password_0123456789abcdef"}},
 				},
 			},
 		},

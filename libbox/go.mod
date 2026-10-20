@@ -73,3 +73,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.1.7 // indirect
 )
+
+replace github.com/sagernet/sing-box/xraybridge => ./xraybridge

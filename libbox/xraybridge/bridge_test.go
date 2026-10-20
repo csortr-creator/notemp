@@ -15,9 +15,9 @@ import (
 func TestBridgeStartStopAndSocks(t *testing.T) {
 	b := NewBridge()
 
-	// Create a randomized user/pass for authentication as requested.
+	// Synthetic fixture credentials; production callers must use a CSPRNG.
 	user := "xray_user"
-	pass := "xray_pass"
+	pass := "xray_fixture_password_0123456789abcdef"
 
 	config := map[string]interface{}{
 		"inbounds": []interface{}{
@@ -88,6 +88,15 @@ func TestBridgeStartStopAndSocks(t *testing.T) {
 	if string(buf[:n]) != "ok" {
 		t.Fatalf("expected ok, got %s", string(buf[:n]))
 	}
+	wrong, err := proxy.SOCKS5("tcp", "127.0.0.1:10800", &proxy.Auth{User: user, Password: "wrong"}, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unexpected, err := wrong.Dial("tcp", l.Addr().String())
+	if err == nil {
+		unexpected.Close()
+		t.Fatal("wrong SOCKS password accepted")
+	}
 }
 
 func TestBridgeMultipleStart(t *testing.T) {
@@ -99,7 +108,8 @@ func TestBridgeMultipleStart(t *testing.T) {
 				"listen":   "127.0.0.1",
 				"protocol": "socks",
 				"settings": map[string]interface{}{
-					"auth": "noauth",
+					"auth":     "password",
+					"accounts": []interface{}{map[string]interface{}{"user": "fixture", "pass": "xray_fixture_password_0123456789abcdef"}},
 				},
 			},
 		},

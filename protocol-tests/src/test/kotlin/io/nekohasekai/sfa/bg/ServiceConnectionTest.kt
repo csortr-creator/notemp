@@ -21,10 +21,11 @@ import java.io.File
 class ServiceConnectionTest {
     class MockCallback : io.nekohasekai.sfa.bg.ServiceConnection.Callback {
         var status: Status? = null
+        var alerts = 0
         override fun onServiceStatusChanged(status: Status) {
             this.status = status
         }
-        override fun onServiceAlert(type: Alert, message: String?) {}
+        override fun onServiceAlert(type: Alert, message: String?) { alerts++ }
     }
 
     class MockContext : Context(File("")) {
@@ -46,7 +47,7 @@ class ServiceConnectionTest {
         }
     }
 
-    class MockIService : IService.Stub() {
+    open class MockIService : IService.Stub() {
         var registeredCallback: IServiceCallback? = null
         override fun getStatus(): Int = Status.Started.ordinal
         override fun registerCallback(callback: IServiceCallback) {
@@ -148,12 +149,13 @@ class ServiceConnectionTest {
 
         connection.connect()
 
-        // Disconnect immediately before the service connects
+        // Retain the old Android callback; MockContext clears conn on unbind.
+        val oldDelegate = requireNotNull(context.conn)
         connection.disconnect()
 
         val mockService = MockIService()
         // Simulate a late onServiceConnected that arrives after disconnect
-        (context.conn as? android.content.ServiceConnection)?.onServiceConnected(ComponentName("test", "test"), mockService)
+        oldDelegate.onServiceConnected(ComponentName("test", "test"), mockService)
 
         // The service should have been unregistered, and we shouldn't hold a reference to it
         assertNull(mockService.registeredCallback)
@@ -171,13 +173,139 @@ class ServiceConnectionTest {
         val mockService = MockIService()
         (context.conn as? android.content.ServiceConnection)?.onServiceConnected(ComponentName("test", "test"), mockService)
 
+        val oldDelegate = requireNotNull(context.conn)
         connection.disconnect()
         val prevBindCount = context.bindCount
 
         // Late onBindingDied
-        (context.conn as? android.content.ServiceConnection)?.onBindingDied(null)
+        oldDelegate.onBindingDied(null)
 
         // Should not have triggered a reconnect
         assertEquals(prevBindCount, context.bindCount)
     }
+    @Test fun duplicateConnectKeepsOneBindingAndReusesItsIdentity() {
+        val context = MockContext()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, MockCallback())
+        connection.connect()
+        val original = context.conn
+        connection.connect()
+        assertEquals(1, context.bindCount)
+        assertSame(original, context.conn)
+        connection.disconnect()
+    }
+
+    @Test fun oldRemoteStatusAndAlertsCannotUpdateReplacementSession() {
+        val context = MockContext()
+        val callback = MockCallback()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, callback)
+        connection.connect()
+        val oldDelegate = requireNotNull(context.conn)
+        val oldService = MockIService()
+        oldDelegate.onServiceConnected(ComponentName("fixture", "old"), oldService)
+        val oldEvents = requireNotNull(oldService.registeredCallback)
+        connection.reconnect()
+        val nextService = MockIService()
+        requireNotNull(context.conn).onServiceConnected(ComponentName("fixture", "next"), nextService)
+        oldEvents.onServiceStatusChanged(Status.Stopped.ordinal)
+        oldEvents.onServiceAlert(0, "stale")
+        oldDelegate.onBindingDied(null)
+        oldDelegate.onServiceDisconnected(null)
+        assertEquals(Status.Started, callback.status)
+        assertEquals(0, callback.alerts)
+        assertEquals(2, context.bindCount)
+        assertEquals(Status.Started, connection.status)
+        connection.disconnect()
+    }
+
+    @Test fun replacementRemoteOnSameBindingRetiresOldCallback() {
+        val context = MockContext()
+        val callback = MockCallback()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, callback)
+        connection.connect()
+        val delegate = requireNotNull(context.conn)
+        val old = MockIService()
+        delegate.onServiceConnected(ComponentName("fixture", "old"), old)
+        val events = requireNotNull(old.registeredCallback)
+        delegate.onServiceDisconnected(null)
+        val next = MockIService()
+        delegate.onServiceConnected(ComponentName("fixture", "next"), next)
+        events.onServiceStatusChanged(Status.Stopped.ordinal)
+        assertEquals(Status.Started, callback.status)
+        assertNull(old.registeredCallback)
+        connection.disconnect()
+    }
+
+    @Test fun deadRemoteStatusReturnsStoppedAndClearsReference() {
+        val context = MockContext()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, MockCallback())
+        connection.connect()
+        var dead = false
+        val service = object : MockIService() {
+            override fun getStatus(): Int {
+                if (dead) throw android.os.RemoteException()
+                return Status.Started.ordinal
+            }
+        }
+        requireNotNull(context.conn).onServiceConnected(ComponentName("fixture", "service"), service)
+        dead = true
+        assertEquals(Status.Stopped, connection.status)
+        assertNull(service.registeredCallback)
+        connection.disconnect()
+    }
+
+    @Test fun noRegistrationModeNeverRegistersOrUnregisters() {
+        val context = MockContext()
+        val callback = MockCallback()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, callback, register = false)
+        val service = object : MockIService() {
+            override fun registerCallback(callback: IServiceCallback) { fail("No registration requested") }
+            override fun unregisterCallback(callback: IServiceCallback?) { fail("Never registered") }
+        }
+        connection.connect()
+        requireNotNull(context.conn).onServiceConnected(ComponentName("fixture", "service"), service)
+        assertEquals(Status.Started, callback.status)
+        connection.disconnect()
+    }
+
+    @Test fun bindingCanDieBeforeFirstConnectedAndStillRecover() {
+        val context = MockContext()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, MockCallback())
+        connection.connect()
+        val first = requireNotNull(context.conn)
+        first.onBindingDied(null)
+        assertEquals(2, context.bindCount)
+        assertEquals(1, context.unbindCount)
+        assertNotSame(first, context.conn)
+        connection.disconnect()
+        first.onBindingDied(null)
+        assertEquals(2, context.bindCount)
+    }
+
+    @Test fun nullBindingReleasesAndRejectsItsLateEvents() {
+        val context = MockContext()
+        val callback = MockCallback()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, callback)
+        connection.connect()
+        val delegate = requireNotNull(context.conn)
+        delegate.onNullBinding(null)
+        delegate.onServiceConnected(ComponentName("fixture", "late"), MockIService())
+        assertEquals(1, context.unbindCount)
+        assertEquals(Status.Stopped, connection.status)
+        assertNull(callback.status)
+    }
+
+    @Test fun unknownRemoteEnumsAreIgnoredWithoutCrashing() {
+        val context = MockContext()
+        val callback = MockCallback()
+        val connection = io.nekohasekai.sfa.bg.ServiceConnection(context, callback)
+        connection.connect()
+        val service = object : MockIService() { override fun getStatus() = Int.MAX_VALUE }
+        requireNotNull(context.conn).onServiceConnected(ComponentName("fixture", "remote"), service)
+        requireNotNull(service.registeredCallback).onServiceAlert(Int.MAX_VALUE, "invalid")
+        assertNull(callback.status)
+        assertEquals(0, callback.alerts)
+        assertEquals(Status.Stopped, connection.status)
+        connection.disconnect()
+    }
+
 }

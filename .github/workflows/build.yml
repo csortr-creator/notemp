@@ -416,3 +416,19 @@ jobs:
           files: dist/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  xray-bridge-poc:
+    name: Xray bridge PoC (isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: libbox/xraybridge/go.mod
+          cache-dependency-path: libbox/xraybridge/go.sum
+      - name: Test isolated bridge lifecycle and inbound policy
+        working-directory: libbox/xraybridge
+        env:
+          GOTOOLCHAIN: local
+        run: go test -race -timeout 2m -count=3 ./...
