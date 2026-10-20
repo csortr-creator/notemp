@@ -480,6 +480,10 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
+      - name: Verify experimental network lifecycle before native builds
+        run: |
+          chmod +x gradlew
+          ./gradlew -p protocol-tests test --tests "io.nekohasekai.sfa.bg.BridgeNetworkLifecycleTest" --stacktrace
       - name: Install pinned Android SDK and NDK
         shell: bash
         run: |
@@ -526,7 +530,7 @@ jobs:
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite io.nekohasekai.composite.NetworkProvider io.nekohasekai.composite.LookupRequest io.nekohasekai.composite.LookupCancellation
           readelf --dyn-syms --wide dist/composite-aar-check/libbox.so > dist/composite-aar-check/jni-symbols.txt
           go version -m dist/composite-aar-check/libbox.so > dist/composite-aar-check/go-build-info.txt
-          for method in checkSingboxConfig startBridge startProtectedBridge updateBridgeNetwork stopBridge; do
+          for method in checkSingboxConfig startBridge startProtectedBridge updateBridgeNetwork suspendBridgeNetwork stopBridge; do
             grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
           done
           for method in setup newCommandServer version; do

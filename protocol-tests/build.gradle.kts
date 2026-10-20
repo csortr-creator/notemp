@@ -47,6 +47,7 @@ sourceSets.main {
     kotlin.include("io/nekohasekai/sfa/utils/ImportConfirmationQueue.kt")
     kotlin.include("io/nekohasekai/sfa/bg/RuntimeProfileState.kt")
     kotlin.include("io/nekohasekai/sfa/bg/NetworkListenerState.kt")
+    kotlin.include("io/nekohasekai/sfa/bg/BridgeNetworkLifecycle.kt")
     kotlin.include("io/nekohasekai/sfa/bg/ProfileSelectionQueue.kt")
     kotlin.include("io/nekohasekai/sfa/bg/SwitchStartResolver.kt")
     kotlin.include("io/nekohasekai/sfa/utils/SubscriptionImportReport.kt")

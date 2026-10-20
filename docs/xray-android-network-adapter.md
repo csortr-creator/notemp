@@ -95,3 +95,33 @@ complete production-feature AAR, unchanged Libbox public API, new JNI symbols,
 Android Kotlin compilation and exact packaged JNI identity. Independent artifact
 inspection also finds XrayNetworkProvider and NetworkProvider in APK DEX. This
 closes host/binding/compilation gates above; device and activation gates remain.
+
+## Network lifecycle owner (2026-10-20, next gate)
+
+`SuspendBridgeNetwork` retires DNS/dials/TCP/UDP while retaining the authenticated
+local listener and protected owner. No dial succeeds without a current network;
+`UpdateBridgeNetwork` resumes with a fresh captured provider. Stop remains final.
+Host-only bridges cannot use the protected suspend/update operations.
+
+`BridgeNetworkLifecycle` serializes desired configuration, native start/update,
+loss/suspend/recovery and Stop. Repeated notifications for the same running network preserve live sockets.
+Registration generations reject obsolete events
+and Stop calls. Capture/start/update/suspend failures retire the owned bridge;
+subsequent valid network events can restart it. Its phase distinguishes waiting,
+running, suspended, failed and stopped; registering a listener is not connectivity.
+
+The verification-only `XrayNetworkOwner` uses a separate keyed consumer of
+DefaultNetworkListener. A conflated channel moves JNI work off the shared monitor
+actor. Stop invalidates the generation, closes the queue, joins its worker and
+unregisters in a non-cancellable IO cleanup block. Start cancellation also cleans
+up the registration. Libbox's listener and production executor remain untouched.
+
+JVM state-machine tests cover network loss/recovery, stale events/Stop, failed
+capture/start/update/suspend and failed cleanup. Go tests exercise suspension of
+pending DNS, established TCP/UDP and actual SOCKS traffic after resume. Android
+compilation and these host tests do not replace device JNI/handover execution.
+
+Lifecycle validation: CI504/run39441971420 passes on final code
+4462934fe38b427c715c9195bdbf93aaf82785ca, including seven JVM owner-state tests,
+combined Go tests (-race -count=3), production-feature AAR/API/JNI, compilation
+of XrayNetworkOwner and packaged native identity. Device execution remains open.

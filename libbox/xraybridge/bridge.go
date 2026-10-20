@@ -54,6 +54,20 @@ func (b *Bridge) UpdateNetwork(protect socketProtector, resolve domainResolver) 
 	return b.session.Update(protect, resolve)
 }
 
+// SuspendNetwork fails closed during underlying-network loss, retaining the
+// authenticated local listener so UpdateNetwork can resume this protected owner.
+func (b *Bridge) SuspendNetwork() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.session == nil {
+		return errNetworkClosed
+	}
+	if !b.protected {
+		return errors.New("XRAY_PROTECTED_SESSION_REQUIRED")
+	}
+	return b.session.Suspend()
+}
+
 func (b *Bridge) start(ctx context.Context, configJSON []byte, protect socketProtector, resolve domainResolver, protected bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

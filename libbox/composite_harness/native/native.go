@@ -73,6 +73,15 @@ func (f *ExecutorFacade) UpdateBridgeNetwork(provider NetworkProvider) error {
 	return f.bridge.UpdateNetwork(adapter.protect, adapter.resolve)
 }
 
+func (f *ExecutorFacade) SuspendBridgeNetwork() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.bridge == nil {
+		return fmt.Errorf("bridge not started")
+	}
+	return f.bridge.SuspendNetwork()
+}
+
 func (f *ExecutorFacade) StopBridge() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

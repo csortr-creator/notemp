@@ -320,3 +320,74 @@ func TestNetworkSessionInvalidUpdateKeepsCurrentGeneration(t *testing.T) {
 		t.Fatalf("active network exchange: %v", err)
 	}
 }
+
+func TestNetworkSessionSuspendCancelsDNSAndResumes(t *testing.T) {
+	started := make(chan struct{})
+	var controls atomic.Int32
+	s, err := newNetworkSession(context.Background(), func(context.Context, string, uintptr) error { controls.Add(1); return nil },
+		func(ctx context.Context, _ string) ([]netip.Addr, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	result := make(chan error, 1)
+	dest := xnet.UDPDestination(xnet.DomainAddress("suspend.invalid"), 443)
+	go func() {
+		c, e := s.Dial(context.Background(), nil, dest, nil)
+		if c != nil {
+			c.Close()
+		}
+		result <- e
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("DNS not started")
+	}
+	if err = s.Suspend(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-result:
+		if err == nil {
+			t.Fatal("pending DNS succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suspend left DNS blocked")
+	}
+	if _, err = s.Dial(context.Background(), nil, dest, nil); err == nil {
+		t.Fatal("suspended dial succeeded")
+	}
+	if controls.Load() != 0 {
+		t.Fatal("suspended DNS reached socket")
+	}
+	if err = s.Suspend(); err != nil {
+		t.Fatal(err)
+	}
+	protect, resolve := sessionCallbacks()
+	if err = s.Update(protect, resolve); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Dial(context.Background(), nil, xnet.UDPDestination(xnet.LocalHostIP, 443), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err = s.Suspend(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Write([]byte("retired")); err == nil {
+		t.Fatal("suspended UDP socket remains usable")
+	}
+	s.Close()
+	if err = s.Suspend(); err == nil {
+		t.Fatal("suspended closed owner")
+	}
+	if err = s.Update(protect, resolve); err == nil {
+		t.Fatal("resumed closed owner")
+	}
+}
