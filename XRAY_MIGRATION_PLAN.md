@@ -195,3 +195,13 @@ verifies its real-argv correction. CI492, 494 and495 also finished successfully.
 
 The earlier draft's concrete review is retained in
 `docs/xray-executor-review-2026-10-20.md`; PR32's corrections are merged.
+
+### 2026-10-20 — protected JNI network boundary
+
+Implemented owner-scoped asynchronous JNI DNS completion/cancellation and explicit
+protected facade start/network replacement. Added an immutable Android provider
+in the composite verification source set (protect + bind, Q+ cancellable DNS,
+bounded legacy DNS). Host regression tests cover denied protection, real SOCKS
+traffic, replacement closing sockets, pending DNS cancellation and stale replies.
+Production executor activation remains gated on real Android execution/handover,
+upstream global-manager isolation, UDP and performance verification.

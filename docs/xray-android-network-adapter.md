@@ -60,3 +60,26 @@ bound boundary instead of reaching into private fields or using reflection.
 5. Wire original-import executor capability selection into both runtime and probes
    while preserving sing-box's TUN, DNS and user-routing ownership. Verify SOCKS UDP
    and required mask chains, then measure startup, transfer overhead and memory.
+
+## 2026-10-20: protected JNI boundary implementation
+
+The bound facade now has explicit `StartProtectedBridge(config, provider)` and
+`UpdateBridgeNetwork(provider)` operations. `NetworkProvider` supplies protection
+plus binding and asynchronous DNS. Each `LookupRequest` accepts exactly one result,
+validates numeric IPs, propagates cancellation through `LookupCancellation`, rejects
+late/duplicate completions and never falls back to system DNS. Provider methods must
+return promptly and must not reenter facade lifecycle methods; cancellation hooks
+must not block. Invalid provider/update operations fail closed.
+
+`app/src/compositeVerification/.../XrayNetworkProvider.kt` implements this contract
+against a captured non-VPN Android Network. It checks protect's boolean, binds a
+duplicate descriptor, uses Q+ DnsResolver/CancellationSignal and a bounded pre-Q
+worker pool. A pre-Q platform DNS call may ignore interruption; Stop still unblocks
+the Go owner and rejects its eventual reply. Four blocked workers can exhaust the
+legacy pool; excess requests fail instead of spawning unlimited threads.
+
+This source is compiled only with `-PverifyCompositeJni=true`, against the candidate
+AAR. The ordinary production AAR does not yet expose the composite package. No
+production service, network-monitor listener or executor choice has been changed.
+Device execution, lifecycle/handover wiring, process-global manager isolation and
+traffic/UDP/performance gates remain open. Compilation is not device evidence.

@@ -523,10 +523,10 @@ jobs:
           python3 -m unittest discover -s scripts -p test_verify_composite_aar.py -v
           python3 -m unittest discover -s scripts -p test_composite_android_contract.py -v
           python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check dist/libbox-api-reference.aar
-          javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
+          javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite io.nekohasekai.composite.NetworkProvider io.nekohasekai.composite.LookupRequest io.nekohasekai.composite.LookupCancellation
           readelf --dyn-syms --wide dist/composite-aar-check/libbox.so > dist/composite-aar-check/jni-symbols.txt
           go version -m dist/composite-aar-check/libbox.so > dist/composite-aar-check/go-build-info.txt
-          for method in checkSingboxConfig startBridge stopBridge; do
+          for method in checkSingboxConfig startBridge startProtectedBridge updateBridgeNetwork stopBridge; do
             grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
           done
           for method in setup newCommandServer version; do

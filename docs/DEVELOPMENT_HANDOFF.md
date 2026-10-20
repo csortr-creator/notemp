@@ -167,3 +167,13 @@ to `/models` was checked. An attempted external source-code review was rejected
 by automatic approval review because service/token permission did not establish
 permission to transmit those source files. Do not retry or bypass that rejection
 without specific authorization. The completed code review/tests were local.
+
+### 2026-10-20 — protected JNI provider work
+
+`libbox/composite_harness/native/network.go` exposes NetworkProvider,
+LookupRequest and LookupCancellation; the facade adds StartProtectedBridge and
+UpdateBridgeNetwork. See docs/xray-android-network-adapter.md for callback rules.
+Android XrayNetworkProvider is currently in src/compositeVerification, included
+only by verifyCompositeJni=true. Keep ordinary runtime/executor selection unchanged
+until device tests and the remaining isolation/UDP/performance gates pass. No
+credentials belong in this handoff or any public repository file.
