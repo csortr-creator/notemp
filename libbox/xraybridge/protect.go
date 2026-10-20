@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"syscall"
 
+	"google.golang.org/protobuf/proto"
+
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/transport/internet"
 )
@@ -24,7 +26,7 @@ var (
 // session owner. Android integration must supply session-owned callbacks
 // which protect AND bind each socket to the current underlying network, and route
 // DNS over that protected network. There is deliberately no global reset API.
-// Non-nil socket options are rejected until their semantics are implemented.
+// Only already-applied DNS strategy options are accepted; other flags fail closed.
 type protectedDialer struct {
 	protect func(context.Context, string, uintptr) error
 	resolve func(context.Context, string) ([]netip.Addr, error)
@@ -42,7 +44,19 @@ func (p *protectedDialer) Dial(ctx context.Context, src xnet.Address, dest xnet.
 		return nil, errProtectionRequired
 	}
 	if sockopt != nil {
-		return nil, errSocketOptions
+		if _, known := internet.DomainStrategy_name[int32(sockopt.DomainStrategy)]; !known {
+			return nil, errSocketOptions
+		}
+		remaining := proto.Clone(sockopt).(*internet.SocketConfig)
+		remaining.DomainStrategy = internet.DomainStrategy_AS_IS
+		// DialSystem/TcpRaceDial already consumed these scheduling settings for
+		// concrete IP destinations. They are not OS socket options.
+		if dest.Address != nil && dest.Address.Family().IsIP() {
+			remaining.HappyEyeballs = nil
+		}
+		if !proto.Equal(remaining, &internet.SocketConfig{}) {
+			return nil, errSocketOptions
+		}
 	}
 	if dest.Address == nil || (src != nil && !src.Family().IsIP()) {
 		return nil, errResolutionFailed

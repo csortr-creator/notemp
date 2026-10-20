@@ -168,30 +168,95 @@ var _ internet.SystemDialer = (*networkSession)(nil)
 
 func (s *networkSession) DestIpAddress() xnet.IP { return nil }
 
-func (s *networkSession) Dial(ctx context.Context, src xnet.Address, dest xnet.Destination, options *internet.SocketConfig) (net.Conn, error) {
+// DNS and socket operations share the same epoch cancellation registry.
+func (s *networkSession) beginOperation(ctx context.Context) (*networkEpoch, context.Context, *networkDial, error) {
 	if ctx == nil {
-		return nil, errors.New("XRAY_CONTEXT_REQUIRED")
+		return nil, nil, nil, errors.New("XRAY_CONTEXT_REQUIRED")
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	epoch := s.current
 	if s.closed || epoch == nil {
-		s.mu.Unlock()
-		return nil, errNetworkClosed
+		return nil, nil, nil, errNetworkClosed
 	}
 	if epoch.ctx.Err() != nil {
-		s.mu.Unlock()
-		return nil, context.Cause(epoch.ctx)
+		return nil, nil, nil, context.Cause(epoch.ctx)
 	}
 	dialCtx, cancel := context.WithCancelCause(ctx)
 	operation := &networkDial{cancel: cancel}
 	epoch.dials[operation] = struct{}{}
+	return epoch, dialCtx, operation, nil
+}
+
+func (s *networkSession) endOperation(epoch *networkEpoch, operation *networkDial) {
+	operation.cancel(nil)
+	s.mu.Lock()
+	delete(epoch.dials, operation)
 	s.mu.Unlock()
-	defer func() {
-		cancel(nil)
-		s.mu.Lock()
-		delete(epoch.dials, operation)
-		s.mu.Unlock()
-	}()
+}
+
+func (s *networkSession) resolveSystemDomain(ctx context.Context, domain string) ([]net.IP, error) {
+	epoch, lookupCtx, operation, err := s.beginOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.endOperation(epoch, operation)
+	var ips []net.IP
+	if protected, ok := epoch.dialer.(*protectedDialer); ok {
+		if protected.resolve == nil {
+			return nil, errResolverRequired
+		}
+		addresses, err := protected.resolve(lookupCtx, domain)
+		if err != nil {
+			return nil, err
+		}
+		if len(addresses) == 0 || len(addresses) > 256 {
+			return nil, errResolutionFailed
+		}
+		for _, ip := range addresses {
+			if !ip.IsValid() || ip.Zone() != "" {
+				return nil, errResolutionFailed
+			}
+			ips = append(ips, net.IP(ip.Unmap().AsSlice()))
+		}
+	} else {
+		ips, err = net.DefaultResolver.LookupIP(lookupCtx, "ip", domain)
+		if err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if epoch.ctx.Err() != nil {
+		return nil, context.Cause(epoch.ctx)
+	}
+	if lookupCtx.Err() != nil {
+		return nil, context.Cause(lookupCtx)
+	}
+	if s.closed || s.current != epoch {
+		return nil, errNetworkChanged
+	}
+	return ips, nil
+}
+
+func (s *networkSession) checkDirectDNS(ctx context.Context) error {
+	epoch, _, operation, err := s.beginOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.endOperation(epoch, operation)
+	if _, protected := epoch.dialer.(*protectedDialer); protected {
+		return errors.New("XRAY_DIRECT_SYSTEM_DNS_UNSUPPORTED")
+	}
+	return nil
+}
+
+func (s *networkSession) Dial(ctx context.Context, src xnet.Address, dest xnet.Destination, options *internet.SocketConfig) (net.Conn, error) {
+	epoch, dialCtx, operation, err := s.beginOperation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer s.endOperation(epoch, operation)
 	conn, err := epoch.dialer.Dial(dialCtx, src, dest, options)
 	if err != nil {
 		if epoch.ctx.Err() != nil {

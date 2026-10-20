@@ -42,6 +42,16 @@ func (d *processDispatcher) retire(s *networkSession) {
 }
 
 func (d *processDispatcher) Dial(ctx context.Context, src xnet.Address, dest xnet.Destination, options *internet.SocketConfig) (net.Conn, error) {
+	s, err := d.owner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// A concurrent retirement also closes the owner, cancelling any dial that
+	// raced this membership check. The owner never migrates to another Bridge.
+	return s.Dial(ctx, src, dest, options)
+}
+
+func (d *processDispatcher) owner(ctx context.Context) (*networkSession, error) {
 	if ctx == nil {
 		return nil, ErrSessionMissingOrStopped
 	}
@@ -55,9 +65,23 @@ func (d *processDispatcher) Dial(ctx context.Context, src xnet.Address, dest xne
 	if !registered {
 		return nil, ErrSessionMissingOrStopped
 	}
-	// A concurrent retirement also closes the owner, cancelling any dial that
-	// raced this membership check. The owner never migrates to another Bridge.
-	return s.Dial(ctx, src, dest, options)
+	return s, nil
+}
+
+func (d *processDispatcher) ResolveSystemDomain(ctx context.Context, domain string) ([]net.IP, error) {
+	owner, err := d.owner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return owner.resolveSystemDomain(ctx, domain)
+}
+
+func (d *processDispatcher) CheckDirectSystemDNS(ctx context.Context) error {
+	owner, err := d.owner(ctx)
+	if err != nil {
+		return err
+	}
+	return owner.checkDirectDNS(ctx)
 }
 
 func (*processDispatcher) DestIpAddress() xnet.IP { return nil }

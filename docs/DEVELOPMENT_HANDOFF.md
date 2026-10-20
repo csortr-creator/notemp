@@ -226,3 +226,18 @@ Subsequent PR41 changes only record evidence in documentation. DNS/outbound feat
 isolation is addressed for the reviewed paths; do not interpret this as arbitrary
 full Xray JSON being safe for Android. Next audit: protected client-config/direct-DNS
 paths and transport-cache lifetime, followed by device/UDP/performance/activation.
+
+
+### 2026-10-20 — owned system DNS (current gate)
+
+Implemented a third reproducible Xray patch for session-owned default/localhost,
+freedom and UDP-fallback DNS. Protected A/AAAA uses the Android network provider
+and shares epoch cancellation with socket operations. Missing/retired owners fail
+closed. Direct +local DNS, SRV/TXT and unreviewed masks are rejected in protected
+execution before unsafe network work. Import retention is unchanged. Real SOCKS
+DNS/handover regressions and the combined Go suite passed -race -count=3; all four
+source-preparation regressions passed. Android CI evidence will follow separately.
+See docs/xray-instance-isolation.md for the exact scope.
+Next: preserve gRPC dial callback owner context and retire owner-scoped transport
+caches. Device JNI/protect/bind/handover, UDP/masks, performance and production
+activation remain unverified; do not activate the executor based on host tests.

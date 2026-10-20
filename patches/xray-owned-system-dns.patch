@@ -1,0 +1,181 @@
+diff --git a/transport/internet/dialer.go b/transport/internet/dialer.go
+--- a/transport/internet/dialer.go
++++ b/transport/internet/dialer.go
+@@ -98,7 +98,15 @@
+ 		return nil, errors.New("DNS client not initialized").AtError()
+ 	}
+ 
+-	ips, _, err := dnsClient.LookupIP(domain, dns.IPOption{
++	lookup := func(option dns.IPOption) ([]net.IP, uint32, error) {
++		if client, ok := dnsClient.(interface {
++			LookupIPContext(context.Context, string, dns.IPOption) ([]net.IP, uint32, error)
++		}); ok {
++			return client.LookupIPContext(ctx, domain, option)
++		}
++		return dnsClient.LookupIP(domain, option)
++	}
++	ips, _, err := lookup(dns.IPOption{
+ 		IPv4Enable: (localAddr == nil && strategy.PreferIP4()) || (localAddr != nil && localAddr.Family().IsIPv4() && (strategy.PreferIP4() || strategy.FallbackIP4())),
+ 		IPv6Enable: (localAddr == nil && strategy.PreferIP6()) || (localAddr != nil && localAddr.Family().IsIPv6() && (strategy.PreferIP6() || strategy.FallbackIP6())),
+ 	})
+@@ -110,7 +118,7 @@
+ 	}
+ 	{ // Resolve fallback
+ 		if (len(ips) == 0 || err != nil) && strategy.HasFallback() && localAddr == nil {
+-			ips, _, err = dnsClient.LookupIP(domain, dns.IPOption{
++			ips, _, err = lookup(dns.IPOption{
+ 				IPv4Enable: strategy.FallbackIP4(),
+ 				IPv6Enable: strategy.FallbackIP6(),
+ 			})
+@@ -264,6 +272,11 @@
+ 		return effectiveSystemDialer.Dial(ctx, src, dest, sockopt)
+ 	}
+ 
++	if sockopt.AddressPortStrategy != AddressPortStrategy_None {
++		if err := CheckDirectSystemDNS(ctx); err != nil {
++			return nil, err
++		}
++	}
+ 	if newDest, err := checkAddressPortStrategy(ctx, dest, sockopt); err == nil && newDest != nil {
+ 		errors.LogInfo(ctx, "replace destination with "+newDest.String())
+ 		dest = *newDest
+diff --git a/features/dns/localdns/client.go b/features/dns/localdns/client.go
+--- a/features/dns/localdns/client.go
++++ b/features/dns/localdns/client.go
+@@ -40,6 +40,27 @@
+ 	if err != nil {
+ 		return nil, 0, err
+ 	}
++	return filterIPs(ips, option)
++}
++
++// LookupIPContext resolves through an installed owner callback before any OS DNS.
++func (c *Client) LookupIPContext(ctx context.Context, host string, option dns.IPOption) ([]net.IP, uint32, error) {
++	var ips []net.IP
++	var err error
++	if internet.HasSystemDomainResolver() {
++		ips, err = internet.ResolveSystemDomain(ctx, host)
++	} else if len(internet.Controllers) > 0 {
++		ips, err = c.r.LookupIP(ctx, "ip", host)
++	} else {
++		ips, err = net.DefaultResolver.LookupIP(ctx, "ip", host)
++	}
++	if err != nil {
++		return nil, 0, err
++	}
++	return filterIPs(ips, option)
++}
++
++func filterIPs(ips []net.IP, option dns.IPOption) ([]net.IP, uint32, error) {
+ 	parsedIPs := make([]net.IP, 0, len(ips))
+ 	ipv4 := make([]net.IP, 0, len(ips))
+ 	ipv6 := make([]net.IP, 0, len(ips))
+diff --git a/app/dns/nameserver_local.go b/app/dns/nameserver_local.go
+--- a/app/dns/nameserver_local.go
++++ b/app/dns/nameserver_local.go
+@@ -19,7 +19,7 @@
+ // QueryIP implements Server.
+ func (s *LocalNameServer) QueryIP(ctx context.Context, domain string, option dns.IPOption) (ips []net.IP, ttl uint32, err error) {
+ 	start := time.Now()
+-	ips, ttl, err = s.client.LookupIP(domain, option)
++	ips, ttl, err = s.client.LookupIPContext(ctx, domain, option)
+ 
+ 	if len(ips) > 0 {
+ 		errors.LogInfo(ctx, "Localhost got answer: ", domain, " -> ", ips)
+diff --git a/app/dns/nameserver.go b/app/dns/nameserver.go
+--- a/app/dns/nameserver.go
++++ b/app/dns/nameserver.go
+@@ -14,6 +14,7 @@
+ 	"github.com/xtls/xray-core/core"
+ 	"github.com/xtls/xray-core/features/dns"
+ 	"github.com/xtls/xray-core/features/routing"
++	"github.com/xtls/xray-core/transport/internet"
+ )
+ 
+ // Server is the interface for Name Server.
+@@ -49,6 +50,11 @@
+ 		u, err := url.Parse(address.Domain())
+ 		if err != nil {
+ 			return nil, err
++		}
++		if strings.Contains(strings.ToLower(u.Scheme), "+local") {
++			if err := internet.CheckDirectSystemDNS(ctx); err != nil {
++				return nil, err
++			}
+ 		}
+ 		switch {
+ 		case strings.EqualFold(u.String(), "localhost"):
+diff --git a/proxy/freedom/freedom.go b/proxy/freedom/freedom.go
+--- a/proxy/freedom/freedom.go
++++ b/proxy/freedom/freedom.go
+@@ -312,12 +312,12 @@
+ 						}
+ 					}
+ 				} else {
+-					addrs, err := net.DefaultResolver.LookupIPAddr(ctx, destination.Address.Domain())
++					addrs, err := internet.ResolveSystemDomain(ctx, destination.Address.Domain())
+ 					if err != nil { // dialer may retry DNS
+ 						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", destination.Address.Domain())
+ 					}
+ 					for _, addr := range addrs {
+-						if ipAddr := net.IPAddress(addr.IP); ipAddr != nil {
++						if ipAddr := net.IPAddress(addr); ipAddr != nil {
+ 							if rule := h.matchFinalRule(destination.Network, ipAddr, destination.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+ 								blockedDest = &destination
+ 								blockedDest.Address = ipAddr
+@@ -618,12 +618,12 @@
+ 						}
+ 					}
+ 					if shouldUseSystemResolver {
+-						udpAddr, err := net.ResolveUDPAddr("udp", b.UDP.NetAddr())
+-						if err != nil {
++						resolved, err := internet.ResolveSystemDomain(w.ctx, b.UDP.Address.Domain())
++						if err != nil || len(resolved) == 0 {
+ 							b.Release()
+ 							continue
+ 						} else {
+-							ip = net.IPAddress(udpAddr.IP)
++							ip = net.IPAddress(resolved[0])
+ 						}
+ 					}
+ 					if ip != nil {
+diff --git a/transport/internet/system_dns.go b/transport/internet/system_dns.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/system_dns.go
+@@ -0,0 +1,35 @@
++package internet
++
++import (
++	"context"
++	"github.com/xtls/xray-core/common/net"
++)
++
++// SystemDomainResolver must fail closed for missing/retired network owners.
++type SystemDomainResolver interface {
++	ResolveSystemDomain(context.Context, string) ([]net.IP, error)
++}
++type DirectSystemDNSGuard interface{ CheckDirectSystemDNS(context.Context) error }
++
++func HasSystemDomainResolver() bool {
++	_, ok := effectiveSystemDialer.(SystemDomainResolver)
++	return ok
++}
++
++func ResolveSystemDomain(ctx context.Context, domain string) ([]net.IP, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	if resolver, ok := effectiveSystemDialer.(SystemDomainResolver); ok {
++		return resolver.ResolveSystemDomain(ctx, domain)
++	}
++	return net.DefaultResolver.LookupIP(ctx, "ip", domain)
++}
++
++// Direct DNS transports and SRV/TXT need more than the A/AAAA owner callback.
++func CheckDirectSystemDNS(ctx context.Context) error {
++	if guard, ok := effectiveSystemDialer.(DirectSystemDNSGuard); ok {
++		return guard.CheckDirectSystemDNS(ctx)
++	}
++	return ctx.Err()
++}
