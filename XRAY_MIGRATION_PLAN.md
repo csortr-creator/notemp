@@ -44,13 +44,21 @@ core, not the obsolete checked-in `libbox/go.mod`.
   options until their semantics are implemented. The future Android owner must
   protect and bind sockets AND provide DNS over the protected underlying network.
   These Linux callback tests are not Android/JNI protection evidence.
+- A private `networkSession` now owns immutable callback generations: replacing
+  the underlying network cancels registered DNS/dials synchronously and closes
+  established sockets from that generation. Invalid updates preserve the current
+  network; closing an old socket cannot close the replacement. UDP retains its
+  `net.PacketConn` interface. Six host regression tests cover replacement,
+  in-flight DNS/protection, parent cancellation, concurrent Update/Dial/Close and
+  invalid update rollback. This owner is not installed in Xray or Android yet.
+  See `docs/xray-network-session.md`.
 - `libbox/composite_harness` imports actual sing-box `experimental/libbox` and
   Xray in one graph, constructs sing-box while Xray runs, and closes both. This
   establishes host dependency/initialization compatibility, not a composite AAR.
   The bridge suite is also repeated under this combined dependency graph, so its
   wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
-  detector and three repetitions. Local validation passed all16 bridge test
+  detector and three repetitions. Local validation passed all22 bridge test
   functions and three composite initializations. Do not report a new CI run as
   passed until it ends.
 
