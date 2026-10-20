@@ -464,7 +464,7 @@ jobs:
     name: Isolated composite Android arm64 AAR
     if: github.event_name == 'workflow_dispatch' && inputs.isolated_aar_only == true
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       GOTOOLCHAIN: local
     steps:
@@ -498,38 +498,47 @@ jobs:
       - name: Verify facade and both cores on host
         working-directory: libbox/composite_harness
         run: go test -mod=readonly -race -timeout 2m -ldflags=-checklinkname=0 -tags=with_quic,with_utls -count=3 github.com/sagernet/sing-box/xraybridge ./...
-      - name: Install pinned mobile tools
+      - name: Install the production mobile generator
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
-          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Build isolated arm64 AAR
+      - name: Build the production reference using its actual builder
+        working-directory: sing-box-core
+        run: |
+          go run ./cmd/internal/build_libbox -target android -platform android/arm64
+          mkdir -p ../dist
+          cp libbox.aar ../dist/libbox-api-reference.aar
+      - name: Build composite with the actual production feature contract
         working-directory: libbox/composite_harness
         env:
           GOFLAGS: -mod=readonly
         run: |
-          set -euxo pipefail
-          mkdir -p ../../dist
-          gomobile init
-          # Bind the complete service/TUN API together with the new facade.
-          gomobile bind -v -o ../../dist/composite-arm64.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 ./native github.com/sagernet/sing-box/experimental/libbox
-          # Same pinned sources/toolchain: independent legacy-only API reference.
-          gomobile bind -v -o ../../dist/libbox-api-reference.aar -target android/arm64 -javapkg io.nekohasekai -androidapi 21 -tags with_quic,with_utls -ldflags=-checklinkname=0 github.com/sagernet/sing-box/experimental/libbox
+          python3 ../../scripts/composite_android_contract.py build ../../dist/libbox-api-reference.aar ../../dist/composite-arm64.aar ../../dist/composite-build-contract.json
           git diff --exit-code -- go.mod go.sum
           cp ../../xray-core/.notemp-source.json ../../dist/xray-source-provenance.json
       - name: Verify arm64 JNI and generated Java API
         run: |
           python3 -m unittest discover -s scripts -p test_verify_composite_aar.py -v
+          python3 -m unittest discover -s scripts -p test_composite_android_contract.py -v
           python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check dist/libbox-api-reference.aar
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
-          readelf --dyn-syms --wide dist/composite-aar-check/libgojni.so > dist/composite-aar-check/jni-symbols.txt
-          go version -m dist/composite-aar-check/libgojni.so > dist/composite-aar-check/go-build-info.txt
+          readelf --dyn-syms --wide dist/composite-aar-check/libbox.so > dist/composite-aar-check/jni-symbols.txt
+          go version -m dist/composite-aar-check/libbox.so > dist/composite-aar-check/go-build-info.txt
           for method in checkSingboxConfig startBridge stopBridge; do
             grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
           done
           for method in setup newCommandServer version; do
             grep -F "Java_io_nekohasekai_libbox_Libbox_$method" dist/composite-aar-check/jni-symbols.txt
           done
+      - name: Compile and package the application against the candidate AAR
+        run: |
+          mkdir -p app/libs
+          cp dist/composite-arm64.aar app/libs/libbox.aar
+          chmod +x gradlew
+          ./gradlew assembleOtherDebug -PverifyCompositeJni=true -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseG1GC" --stacktrace
+      - name: Verify packaged JNI is the candidate, without duplicate libraries
+        run: python3 scripts/verify_composite_apk.py dist/composite-arm64.aar app/build/outputs/apk/other/debug
       - uses: actions/upload-artifact@v4
         with:
           name: composite-arm64-aar-${{ github.sha }}
@@ -539,5 +548,7 @@ jobs:
             dist/composite-aar-check/go-build-info.txt
             dist/composite-aar-check/libbox-public-api.txt
             dist/xray-source-provenance.json
+            dist/composite-build-contract.json
+            app/build/outputs/apk/other/debug/*.apk
           if-no-files-found: error
           retention-days: 7
