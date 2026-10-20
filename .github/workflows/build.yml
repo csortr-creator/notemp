@@ -514,7 +514,7 @@ jobs:
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
           readelf --dyn-syms --wide dist/composite-aar-check/libgojni.so > dist/composite-aar-check/jni-symbols.txt
           for method in checkSingboxConfig startBridge stopBridge; do
-            rg "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
+            grep -F "Java_io_nekohasekai_composite_ExecutorFacade_$method" dist/composite-aar-check/jni-symbols.txt
           done
       - uses: actions/upload-artifact@v4
         with:
