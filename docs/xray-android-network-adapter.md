@@ -120,3 +120,8 @@ JVM state-machine tests cover network loss/recovery, stale events/Stop, failed
 capture/start/update/suspend and failed cleanup. Go tests exercise suspension of
 pending DNS, established TCP/UDP and actual SOCKS traffic after resume. Android
 compilation and these host tests do not replace device JNI/handover execution.
+
+Lifecycle validation: CI504/run39441971420 passes on final code
+4462934fe38b427c715c9195bdbf93aaf82785ca, including seven JVM owner-state tests,
+combined Go tests (-race -count=3), production-feature AAR/API/JNI, compilation
+of XrayNetworkOwner and packaged native identity. Device execution remains open.

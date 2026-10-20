@@ -196,3 +196,13 @@ machine; `XrayNetworkOwner.kt` is its verification-only Android adapter. Native
 UpdateBridgeNetwork recovery. The Android owner exposes phase as StateFlow; start
 registers desired execution, so callers must not treat its return as connectivity.
 Do not wire this into production until the outstanding device/isolation gates.
+
+PR40 final code `4462934fe38b427c715c9195bdbf93aaf82785ca` passed CI504:
+https://github.com/csortr-creator/notemp/actions/runs/39441971420
+Seven BridgeNetworkLifecycleTest scenarios and the combined Go suite (-race,
+-count=3) passed, along with complete AAR/API/JNI, Android Kotlin compilation and
+APK native identity checks. Any later PR40 commit only records this evidence.
+Repeated notifications for the same live Network do not replace its generation;
+a loss followed by recovery on that same Network does replace it. CI503 was
+cancelled after its JVM stage to verify this final adjustment in CI504 instead.
+No Android device JNI, connectivity/handover or production activation is claimed.
