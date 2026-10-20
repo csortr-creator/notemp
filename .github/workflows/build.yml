@@ -519,6 +519,7 @@ jobs:
           cp ../../xray-core/.notemp-source.json ../../dist/xray-source-provenance.json
       - name: Verify arm64 JNI and generated Java API
         run: |
+          python3 -m unittest discover -s scripts -p test_verify_composite_aar.py -v
           python3 scripts/verify_composite_aar.py dist/composite-arm64.aar dist/composite-aar-check dist/libbox-api-reference.aar
           javap -classpath dist/composite-aar-check/classes.jar io.nekohasekai.composite.ExecutorFacade io.nekohasekai.composite.Composite
           readelf --dyn-syms --wide dist/composite-aar-check/libgojni.so > dist/composite-aar-check/jni-symbols.txt
