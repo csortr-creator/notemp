@@ -25,4 +25,5 @@ interface ServiceConnection {
     fun onServiceConnected(name: ComponentName, service: android.os.IBinder)
     fun onServiceDisconnected(name: ComponentName?)
     fun onBindingDied(name: ComponentName?) {}
+    fun onNullBinding(name: ComponentName?) {}
 }

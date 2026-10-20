@@ -1,22 +1,53 @@
-# Xray Composite Core Migration Plan
+# Xray executor migration — verified state, 20 October 2026
 
-## Problem Statement
-The current monolithic `sing-box` core is facing compatibility limitations. Some specific configurations (like `FinalMask` and `XHTTP extra`) natively supported by `Xray-core` are missing or incompletely implemented in `sing-box`. Applying individual patches is not a scalable approach for the future.
+Production Android still uses pinned sing-box1.14.2 +24 patches. This directory
+is an isolated Go module; it is not linked into the production AAR or used by
+imports/probes. Merging its PR does not enable Xray support in the APK.
 
-## Approach
-This Proof of Concept (PoC) explores embedding `Xray-core` alongside `sing-box` within a single Go composite AAR library, running in-process via an isolated loopback SOCKS bridge interface (`xraybridge`). This approach ensures compatibility while reusing `sing-box`'s established mechanisms (Android TUN, DNS, and Routing).
+## Implemented and checked
 
-## Proof of Concept
-The PoC introduces a new package `libbox/xraybridge`:
-1.  **Bridge Interface (`bridge.go`)**: Manages the lifecycle of an embedded `Xray-core` instance using JSON configurations decoded into `Xray-core`'s native structs.
-2.  **Validation (`bridge_test.go`)**: Contains functional tests ensuring that the embedded core can correctly spin up a local proxy, route traffic (TCP/UDP), handle edge cases, and stop cleanly.
-3.  **Module Isolation**: Created as a separate module to bypass strict dependency conflicts (like `gvisor` compatibility) in `sing-box`. Later we can merge both into one single build execution by mapping `replace` directives properly across the workspace or building them together as a composite AAR via `gomobile`.
+- Embedded Xray v1.260327.0 can run an authenticated loopback SOCKS endpoint
+  and pass a synthetic TCP response through a freedom outbound.
+- `Bridge` serializes Start/Stop, rejects a second Start, uses the parent
+  context, closes failed partial starts, and retires instances before restart.
+  Cancellation of an old context cannot stop a replacement instance.
+- Input policy requires literal loopback SOCKS inbounds, password auth and
+  passwords of at least32bytes (maximum255); ancillary API/metrics/reverse
+  endpoints are rejected. The caller must generate credentials with a CSPRNG;
+  fixture passwords are synthetic constants, not random production secrets.
+- Race tests repeat three times: context cancellation, repeated/concurrent Stop,
+  restart, failed startup with an occupied listener and rejected inbound policies.
+- Existing XHTTP tests are config/startup smoke tests only.
+- CI checks this module in a separate Go1.26 job. This is not a composite build.
 
-## JNI / Android Contract
-For integration with the UI (and specifically avoiding overlaps with ProfileManager UI layers handled by Codex), Android will initiate the loopback interface on demand using JNI methods exposed via a future extension to `adapter` and `box.go`. The underlying process is shielded using Android socket protection inherited from the sing-box instance.
+## Corrections to the original PoC claims
 
-## Performance Profile
-The added overhead primarily involves an additional TCP hop via loopback (127.0.0.1) and a slight bump in RSS (memory) due to instantiating dual networking stacks for specifically delegated nodes. `sing-box` will still act as the primary endpoint.
+The former `TestBridgeFinalMask` contained no FinalMask configuration. It has
+been renamed `TestBridgeTCPDialerProxyConfigSmoke`; its startup success proves
+neither mask execution nor a working dialerProxy reference. The pinned March
+Xray source has no `infra/conf/transport_finalmask.go`. Do not claim modern
+FinalMask compatibility from these fixtures.
 
-## Exact Baseline
-Baseline SHA: `d2735f4d1fcc4f754086b8c4acb54eddf38c4a11`
+No test here currently proves UDP traffic, XHTTP data exchange, mask chains,
+wrong-key/mask rejection, Android socket protection or JNI integration. Socket
+protection is not inherited merely because the app also uses sing-box. RSS and
+latency overhead have not been measured.
+
+## Required next gates
+
+1. Pin an official Xray revision with the actually required wire features, then
+   prove TCP/UDP and domain handling through real positive/negative fixtures.
+   Do not assume a newer version tag exists in the Go module proxy: the queried
+   module list currently ends at v1.260327.0; verify upstream tag/commit explicitly.
+2. Build sing-box and Xray in one Go dependency graph/native library. Separate
+   go.mod files do not prove dependency or gvisor compatibility in a composite AAR.
+3. Connect every Xray socket to Android protection and the current underlying
+   network, including DNS/UDP and network replacement. Verify on Android/JNI.
+4. Route original Xray outbounds through authenticated loopback while preserving
+   sing-box TUN/DNS/user routing. Share node selection, probe, reload and Stop;
+   never silently fall back to direct on backend failure.
+5. Integrate this contract into the common import pipeline and regression matrix;
+   measure startup, idle/active RSS and transfer overhead before release.
+
+Follow-up task: https://jules.google.com/session/15780583428840000315
+No automatic release or merge approval follows from this document.

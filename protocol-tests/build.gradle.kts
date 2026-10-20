@@ -70,6 +70,7 @@ tasks.test { useJUnit() }
 val syncPlatformAdapterSources by tasks.registering(Sync::class) {
     from("../app/src/main/java") {
         include("io/nekohasekai/sfa/bg/ServiceBinder.kt")
+        include("io/nekohasekai/sfa/bg/ServiceConnection.kt")
         include("io/nekohasekai/sfa/constant/Status.kt")
         include("io/nekohasekai/sfa/bg/DefaultNetworkListener.kt")
         include("io/nekohasekai/sfa/bg/DefaultNetworkMonitor.kt")

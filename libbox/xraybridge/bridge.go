@@ -3,51 +3,83 @@ package xraybridge
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
+	"sync"
+
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf/serial"
 	_ "github.com/xtls/xray-core/main/distro/all"
 )
 
-// Bridge encapsulates an Xray core instance. It operates as a composite
-// handler for specialized protocols unsupported natively by sing-box,
-// such as specific FinalMask and XHTTP features.
+var ErrStarted = errors.New("XRAY_ALREADY_STARTED")
+
+// Bridge is an isolated experimental executor, not an Android/JNI integration.
+// Calls are serialized; a retired context can never close a replacement instance.
 type Bridge struct {
-	instance *core.Instance
+	mu          sync.Mutex
+	instance    *core.Instance
+	cancelWatch func() bool
 }
 
-// NewBridge creates a new Bridge.
-func NewBridge() *Bridge {
-	return &Bridge{}
-}
+func NewBridge() *Bridge { return &Bridge{} }
 
-// Start launches the embedded Xray core with the provided JSON configuration.
-// By contract, this configuration should open a loopback SOCKS inbound
-// with a random auth token.
-func (b *Bridge) Start(ctx context.Context, configJson []byte) error {
-	config, err := serial.DecodeJSONConfig(bytes.NewReader(configJson))
+func (b *Bridge) Start(ctx context.Context, configJSON []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.instance != nil {
+		return ErrStarted
+	}
+	if ctx == nil {
+		return errors.New("XRAY_CONTEXT_REQUIRED")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateBridgePolicy(configJSON); err != nil {
+		return err
+	}
+	config, err := serial.DecodeJSONConfig(bytes.NewReader(configJSON))
 	if err != nil {
-		return fmt.Errorf("failed to decode json config: %w", err)
+		return errors.New("XRAY_CONFIG_DECODE_FAILED")
 	}
 	coreConfig, err := config.Build()
 	if err != nil {
-		return fmt.Errorf("failed to build core config: %w", err)
+		return errors.New("XRAY_CONFIG_BUILD_FAILED")
 	}
-	instance, err := core.New(coreConfig)
+	instance, err := core.NewWithContext(ctx, coreConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create core instance: %w", err)
+		return errors.New("XRAY_INSTANCE_CREATE_FAILED")
 	}
 	if err := instance.Start(); err != nil {
-		return fmt.Errorf("failed to start core instance: %w", err)
+		_ = instance.Close()
+		return errors.New("XRAY_INSTANCE_START_FAILED")
+	}
+	if err := ctx.Err(); err != nil {
+		_ = instance.Close()
+		return err
 	}
 	b.instance = instance
+	b.cancelWatch = context.AfterFunc(ctx, func() { _ = b.stopInstance(instance) })
 	return nil
 }
 
-// Stop cleanly terminates the embedded Xray core instance.
-func (b *Bridge) Stop() error {
-	if b.instance != nil {
-		return b.instance.Close()
+func (b *Bridge) Stop() error { return b.stopInstance(nil) }
+
+func (b *Bridge) stopInstance(expected *core.Instance) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.instance == nil || (expected != nil && b.instance != expected) {
+		return nil
+	}
+	instance := b.instance
+	b.instance = nil
+	if b.cancelWatch != nil {
+		b.cancelWatch()
+		b.cancelWatch = nil
+	}
+	// Keep restart serialized until listeners have actually been released.
+	if err := instance.Close(); err != nil {
+		return errors.New("XRAY_INSTANCE_STOP_FAILED")
 	}
 	return nil
 }
