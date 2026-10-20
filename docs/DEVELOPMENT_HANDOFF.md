@@ -189,3 +189,10 @@ also passed -race -count=3. CI500 deliberately failed the existing API gate beca
 Cancel structurally matched two Libbox classes; CancelLookup fixes the cause.
 Do not weaken this gate. The experimental Android provider is compiled but not
 connected to the production service. No phone networking/device test has run.
+
+Next implementation: `BridgeNetworkLifecycle.kt` is the JVM-testable owner state
+machine; `XrayNetworkOwner.kt` is its verification-only Android adapter. Native
+`SuspendBridgeNetwork` retires the current network while retaining the core for
+UpdateBridgeNetwork recovery. The Android owner exposes phase as StateFlow; start
+registers desired execution, so callers must not treat its return as connectivity.
+Do not wire this into production until the outstanding device/isolation gates.

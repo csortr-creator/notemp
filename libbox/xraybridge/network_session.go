@@ -131,6 +131,21 @@ func closeSessionConnections(connections []*sessionConn) {
 	}
 }
 
+// Suspend retires the current network without destroying the core or owner.
+// A later Update installs a fresh generation; no dial may use the retired one.
+func (s *networkSession) Suspend() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errNetworkClosed
+	}
+	retired := retireEpoch(s.current, errNetworkChanged)
+	s.current = nil
+	s.mu.Unlock()
+	closeSessionConnections(retired)
+	return nil
+}
+
 func (s *networkSession) Close() error {
 	s.mu.Lock()
 	if s.closed {

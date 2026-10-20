@@ -177,6 +177,30 @@ func TestProtectedFacadeNetworkLifecycle(t *testing.T) {
 	if provider.protected.Load() == 0 {
 		t.Fatal("socket bypassed provider")
 	}
+	if err := facade.SuspendBridgeNetwork(); err != nil {
+		t.Fatal(err)
+	}
+	if err := facade.SuspendBridgeNetwork(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("suspended socket survived")
+	}
+	if err := facade.UpdateBridgeNetwork(provider); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := dialer.Dial("tcp", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	resumed.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err = resumed.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.ReadFull(resumed, reply); err != nil {
+		t.Fatal(err)
+	}
 	denied := &testProvider{lookup: provider.lookup, protectErr: errors.New("protect denied")}
 	if err := facade.UpdateBridgeNetwork(denied); err != nil {
 		t.Fatal(err)

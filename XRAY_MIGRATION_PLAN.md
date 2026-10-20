@@ -214,3 +214,12 @@ inspection confirmed XrayNetworkProvider and the new JNI provider API in DEX,
 and exact AAR/APK native equality. No Android device execution is claimed.
 Next gate: lifecycle/handover integration and device execution, with upstream
 process-global DNS/outbound-manager isolation still required before activation.
+
+### 2026-10-20 — network loss / handover lifecycle
+
+Implemented explicit protected-network suspend/resume, a generation-guarded
+lifecycle controller, and a verification-only Android owner with a keyed network
+listener, bounded event queue and cancellation-safe cleanup. Observable phases
+separate registration/waiting from a running bridge. Production activation still
+requires device JNI/protect/bind/handover tests, upstream global-manager isolation,
+UDP traffic and performance evidence. Validation is recorded after CI completion.
