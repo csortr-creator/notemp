@@ -54,7 +54,8 @@ core, not the obsolete checked-in `libbox/go.mod`.
   See `docs/xray-network-session.md`.
 - `libbox/composite_harness` imports actual sing-box `experimental/libbox` and
   Xray in one graph, constructs sing-box while Xray runs, and closes both. This
-  establishes host dependency/initialization compatibility, not a composite AAR.
+  establishes host dependency/initialization compatibility. The separate native
+  facade now also exposes serialized lifecycle and configuration calls to gomobile.
   The bridge suite is also repeated under this combined dependency graph, so its
   wire/protection behavior is checked after dependency version selection.
 - CI runs the isolated bridge suite and the composite host proof with the race
@@ -62,10 +63,30 @@ core, not the obsolete checked-in `libbox/go.mod`.
   functions and three composite initializations. Do not report a new CI run as
   passed until it ends.
 
+## Isolated Android AAR
+
+`libbox/composite_harness/native` exposes `ExecutorFacade` and its factory in
+`io.nekohasekai.composite`. Failed starts can retry, duplicate starts preserve the
+active listener, and concurrent starts/stops have one serialized owner. Host tests
+exercise these behaviors with the actual combined sing-box/Xray dependency graph.
+
+The isolated workflow pins the mobile tools, Android SDK and NDK, builds arm64
+with QUIC/uTLS, checks the AArch64 ELF and generated Java API, and verifies JNI
+exports before uploading the AAR. Dispatch with `isolated_aar_only=true` and
+`publish_release=false`; APK and release jobs are skipped for this dispatch.
+
+CI487 cross-compilation and ELF/Java checks passed. Its final symbol check failed
+because the runner lacked ripgrep; the workflow now uses runner-provided grep.
+[CI488](https://github.com/csortr-creator/notemp/actions/runs/39389947689) passed
+on source commit `f9847b4d4e511ec215fc78acd02acea808b3fbce`, including exported JNI
+checks and [artifact upload](https://github.com/csortr-creator/notemp/actions/runs/39389947689/artifacts/12249461293).
+This facade is not linked into production. An AAR build does not establish Android
+loading, protected sockets or VPN traffic.
+
 ## Remaining integration gates
 
-1. Build a composite Android AAR/JNI entry point and check gomobile/toolchain
-   compatibility. Host initialization is not an Android build.
+1. The isolated AAR cross-build/export gate is complete. Verify JNI loading and
+   lifecycle on Android; cross-compilation is not device execution.
 2. Implement session-owned socket protection, underlying-network binding and DNS
    in the Android/native owner, including cancellation and network replacement.
    Never install an unowned global dialer or silently fall back to direct.
@@ -77,4 +98,4 @@ core, not the obsolete checked-in `libbox/go.mod`.
    before enabling the executor in production or releasing it.
 
 The earlier draft's concrete review is retained in
-`docs/xray-executor-review-2026-10-20.md`; PR32 is being corrected against it.
+`docs/xray-executor-review-2026-10-20.md`; PR32's corrections are merged.
