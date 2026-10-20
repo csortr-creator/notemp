@@ -67,7 +67,8 @@ loop read `udpSessionManager.closed` outside the mutex used by its writer. Prepa
 the pinned dependency with `python3 scripts/prepare_xray_core.py` before running
 either module. The script verifies the committed module checksum, copies source
 without editing the module cache, applies `patches/xray-hysteria-session-close.patch`
-and records source/patch digests. Unknown or modified existing output is preserved
+and `patches/xray-instance-dialer-features.patch`, and records the ordered patch
+chain and full source digests. Unknown or modified existing output is preserved
 and rejected. Both standalone and composite modules replace Xray with that same
 prepared tree. AAR artifacts include its source provenance and ELF build metadata.
 
