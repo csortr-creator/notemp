@@ -43,3 +43,9 @@ outside the protected socket callback; do not accept arbitrary full Xray JSON as
 Android-safe. Transport cache ownership/lifetime also needs review. Android device
 JNI/protect/bind, handover/reload, runtime/probe selection with sing-box TUN/routing,
 SOCKS UDP/mask chains and performance gates remain open.
+
+Validation: CI506/run39446460854 succeeded for code
+108bd8fb0a2aff61bd880f6a48a0fc45a56c4e1f. Combined Go tests passed -race -count=3,
+with the source-preparation, JVM lifecycle, AAR/API/JNI and Android packaging gates.
+Artifact12276359097 independently contains matching hashes for both committed
+patches and the contextual lookup in JNI; APK native bytes match the candidate AAR.

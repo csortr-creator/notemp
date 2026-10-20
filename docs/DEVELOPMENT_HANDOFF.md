@@ -214,3 +214,15 @@ lookups and owner-preserving detached DNS. scripts/prepare_xray_core.py applies
 both reviewed patches and records their ordered hashes. Do not hand-edit a prepared
 core or the module cache. See docs/xray-instance-isolation.md for regression coverage
 and the remaining protected client-config/DNS-path and transport-cache audit gates.
+
+PR41 final code `108bd8fb0a2aff61bd880f6a48a0fc45a56c4e1f` passed CI506:
+https://github.com/csortr-creator/notemp/actions/runs/39446460854
+The five feature-isolation regressions and combined Go suite passed -race -count=3;
+four source-ownership tests, JVM lifecycle, AAR/API/JNI and Android packaging checks
+passed. Artifact12276359097 was independently inspected: both patch hashes match
+committed bytes, LookupForIPContext is compiled into JNI, APK JNI equals AAR JNI.
+Native SHA256: b31b154fff89a8beb90c18ff6afc38f71bda6812a546cf6384e9f8bdf828b514.
+Subsequent PR41 changes only record evidence in documentation. DNS/outbound feature
+isolation is addressed for the reviewed paths; do not interpret this as arbitrary
+full Xray JSON being safe for Android. Next audit: protected client-config/direct-DNS
+paths and transport-cache lifetime, followed by device/UDP/performance/activation.

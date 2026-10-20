@@ -243,3 +243,12 @@ invalidates the scope and rejects late DNS results. See docs/xray-instance-isola
 The source preparer now verifies an ordered two-patch chain; four source-ownership
 regressions and five feature-isolation regressions were added. Device execution,
 protected config/DNS-path constraints, cache lifetime, UDP and activation remain open.
+
+PR41 validation: code `108bd8fb0a2aff61bd880f6a48a0fc45a56c4e1f`,
+CI506/run39446460854 passed. Combined Go tests including five new isolation
+regressions passed -race -count=3; four source-preparation tests passed, alongside
+the JVM lifecycle and complete production-feature AAR/API/JNI/Android packaging
+gates. Independent inspection of artifact12276359097 confirmed both committed
+patch hashes in provenance, the contextual lookup compiled into JNI and exact
+AAR/APK native equality. This closes the reviewed DNS/outbound-manager isolation
+gate; protected config/DNS-path constraints and remaining activation gates stay open.
