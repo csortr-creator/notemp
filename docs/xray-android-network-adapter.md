@@ -89,3 +89,9 @@ Binding compatibility detail: LookupCancellation uses the specific method
 interfaces on bound Libbox structs; a generic Cancel interface silently adds an
 implements clause to existing STUNTest/NetworkQualityTest Java APIs. CI500 caught
 this mismatch. Preserve the exact public API gate; do not normalize it away.
+
+CI501/run39436646595 passes on code 460e37158e5067508cd319e2a6bc2b10c48aebb0:
+complete production-feature AAR, unchanged Libbox public API, new JNI symbols,
+Android Kotlin compilation and exact packaged JNI identity. Independent artifact
+inspection also finds XrayNetworkProvider and NetworkProvider in APK DEX. This
+closes host/binding/compilation gates above; device and activation gates remain.
