@@ -24,9 +24,10 @@ imports/probes. Merging its PR does not enable Xray support in the APK.
 
 The former `TestBridgeFinalMask` contained no FinalMask configuration. It has
 been renamed `TestBridgeTCPDialerProxyConfigSmoke`; its startup success proves
-neither mask execution nor a working dialerProxy reference. The pinned March
-Xray source has no `infra/conf/transport_finalmask.go`. Do not claim modern
-FinalMask compatibility from these fixtures.
+neither mask execution nor a working dialerProxy reference. The pinned Xray does contain FinalMask implementation in
+`infra/conf/transport_internet.go` and `transport/internet/finalmask`; the absence
+of a separately named file is not evidence of missing support. The bridge tests
+still do not exercise those masks, so their compatibility is not verified.
 
 No test here currently proves UDP traffic, XHTTP data exchange, mask chains,
 wrong-key/mask rejection, Android socket protection or JNI integration. Socket
