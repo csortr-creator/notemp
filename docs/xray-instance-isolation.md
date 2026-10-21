@@ -37,11 +37,11 @@ output; explicitly preserve a verified old prepared tree before preparing a new
 patch set. Four Python tests exercise the patch order, module-cache immutability,
 verified reuse and rejection of changed patches/sources or unowned output.
 
-This closes the reviewed DNS/outbound-manager cross-instance paths, not every
-possible Xray facility. Production activation still needs an explicit generated
-client-config contract: local/system DNS and direct DNS transports can use paths
-outside the protected socket callback; do not accept arbitrary full Xray JSON as
-Android-safe. Transport cache ownership/lifetime also needs review. Android device
+PR41 closed the reviewed DNS/outbound-manager cross-instance paths. The following
+gate addresses the audited local/system DNS and direct-DNS paths. Production
+activation still needs an explicit generated client-config contract; arbitrary
+full Xray JSON is not yet Android-safe. Transport cache ownership/lifetime remains
+open. Android device
 JNI/protect/bind, handover/reload, runtime/probe selection with sing-box TUN/routing,
 SOCKS UDP/mask chains and performance gates remain open.
 
@@ -84,3 +84,33 @@ Next transport audit: gRPC's fresh dial callback context currently loses owner
 identity; transport caches (gRPC, split-HTTP/Xmux, Hysteria and ECH HTTP clients)
 need owner-scoped lifetime and cleanup. These findings remain open, along with
 Android device execution, SOCKS UDP/masks, performance and production activation.
+
+
+### Transport audit acceptance criteria — 21 October 2026
+
+Preserve socket-owner identity and the instance feature scope in gRPC-generated
+dial contexts, together with gRPC's own cancellation/deadline, without retaining
+a completed application request's cancellation. Cache insertion and retirement
+must be race-safe: no callbacks under cache locks, no insertion after retirement,
+no cross-instance reuse and no retained entries keeping stopped owners alive.
+Do not reset process-global caches on every Start/Stop.
+
+Regressions must cover identical endpoints/configurations in two owners, Stop of
+one while the other continues real traffic, retirement racing insertion, failed
+connect/retry, network loss/resume with changed DNS and repeated Start/Stop with
+bounded resources. Cover gRPC first, then split-HTTP/Xmux, Hysteria and ECH. Keep
+the combined -race -count=3 and Android AAR/API/JNI/packaging gates.
+
+
+PR42 validation — 21 October 2026: code
+`320fbda6b597dc2f58735b0e8c49a2dedfaac461` passed CI508/run39452695392,
+attempt 2: combined Go -race -count=3, four source-preparation regressions, JVM
+lifecycle tests, complete production-feature AAR, unchanged Libbox API/JNI and
+Android app/native packaging checks. Attempt 1 failed fetching Kotlin's Maven BOM;
+no code or check was changed to obtain the passing retry.
+Independent inspection of artifact12280616559 confirmed all three patch hashes,
+ResolveSystemDomain in JNI and identical AAR/APK native bytes.
+JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
+Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
+Later PR42 changes are documentation only. No device execution or production
+activation is claimed. Next implementation remains gRPC context/cache ownership.
