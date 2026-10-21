@@ -91,7 +91,7 @@ diff --git a/transport/internet/system_dialer_resources.go b/transport/internet/
 new file mode 100644
 --- /dev/null
 +++ b/transport/internet/system_dialer_resources.go
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,104 @@
 +package internet
 +
 +import (
@@ -160,10 +160,16 @@ new file mode 100644
 +}
 +
 +func (c systemDialerOperationContext) Value(key any) any {
-+	if value := c.owner.Value(key); value != nil {
++	// Preserve operation internals (notably context.Cause's cancellation key).
++	// Bind the feature scope explicitly; other instance-base values are fallback
++	// values for gRPC's fresh, otherwise unowned operation context.
++	if _, scopeKey := key.(systemDialerScopeKey); scopeKey {
++		return c.owner.Value(key)
++	}
++	if value := c.Context.Value(key); value != nil {
 +		return value
 +	}
-+	return c.Context.Value(key)
++	return c.owner.Value(key)
 +}
 +
 +// A cached transport must use its instance base values, never the first

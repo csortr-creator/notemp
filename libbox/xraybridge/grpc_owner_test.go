@@ -197,8 +197,16 @@ func TestOwnedTransportContextUsesBaseAndBothCancellations(t *testing.T) {
 		t.Fatal("operation deadline lost")
 	}
 	cancelOperation()
-	if ctx.Err() == nil {
-		t.Fatal("operation cancellation lost")
+	if ctx.Err() == nil || !errors.Is(context.Cause(ctx), context.Canceled) {
+		t.Fatal("operation cancellation/cause lost")
+	}
+	causeOperation, cancelCause := context.WithCancelCause(context.Background())
+	causeContext, releaseCause := internet.ContextWithSystemDialerOwner(causeOperation, base)
+	defer releaseCause()
+	cause := errors.New("synthetic gRPC operation cause")
+	cancelCause(cause)
+	if !errors.Is(context.Cause(causeContext), cause) {
+		t.Fatal("operation cancellation cause was replaced by the owner")
 	}
 	ctx2, release2 := internet.ContextWithSystemDialerOwner(context.Background(), base)
 	defer release2()

@@ -144,3 +144,9 @@ Remaining transport work: apply ownership/retirement to split-HTTP/Xmux, Hysteri
 and ECH clients/requests. This patch does not claim those caches are fixed. Device
 JNI/protect/bind/handover, SOCKS UDP/mask, performance and production activation
 remain open. Full Android CI evidence is recorded after completion.
+
+The operation-context regression also checks a custom cancellation cause. It
+failed against the first draft, which prioritized owner context internals, and
+passed after preserving the operation's cancellation internals while explicitly
+binding the feature scope. The superseded CI510 was cancelled before final
+validation; only the subsequent final-code run is acceptance evidence.
