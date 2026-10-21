@@ -24,6 +24,7 @@ recorded reference argv, Go build metadata and prepared Xray source provenance.
 This debug test APK is not a production update or device/traffic test.
 
 CI498/run39430917424 passed on code 1cb1b1c, with 211 reference Libbox classes and
-an independently checked APK/native payload. See XRAY_MIGRATION_PLAN.md for exact
-artifact/source digests and docs/xray-android-network-adapter.md for the next JNI/
-protect/bind/DNS boundary. Preserve the race detector and TLS verification.
+an independently checked APK/native payload. Later owner-context and gRPC lifecycle
+checks passed in CI511/run39542101838 (PR43). See the run's source provenance and
+build-contract artifacts for exact digests, and docs/xray-android-network-adapter.md
+for the JNI/protect/bind/DNS boundary. Preserve the race detector and TLS verification.
