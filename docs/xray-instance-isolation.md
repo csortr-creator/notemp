@@ -28,19 +28,20 @@ real dialerProxy chains with the same tag but different destinations, detached
 DNS/socket identity and six concurrently constructed instances. These are grouped
 into five Go test functions and run in the combined production dependency graph.
 The socket-strategy/dialerProxy wire fixtures deliberately use host executors:
-protected Android socket options are still rejected by the existing bridge.
+protected Android socket options were still rejected at that gate; the following
+owned system-DNS gate now permits already-applied DNS/scheduling settings.
 
-The source preparer records hashes for BOTH ordered patches and all prepared
+The source preparer records hashes for the ordered patches and all prepared
 source files. It preserves and rejects modified, unowned or differently patched
 output; explicitly preserve a verified old prepared tree before preparing a new
 patch set. Four Python tests exercise the patch order, module-cache immutability,
 verified reuse and rejection of changed patches/sources or unowned output.
 
-This closes the reviewed DNS/outbound-manager cross-instance paths, not every
-possible Xray facility. Production activation still needs an explicit generated
-client-config contract: local/system DNS and direct DNS transports can use paths
-outside the protected socket callback; do not accept arbitrary full Xray JSON as
-Android-safe. Transport cache ownership/lifetime also needs review. Android device
+PR41 closed the reviewed DNS/outbound-manager cross-instance paths. The following
+gate addresses the audited local/system DNS and direct-DNS paths. Production
+activation still needs an explicit generated client-config contract; arbitrary
+full Xray JSON is not yet Android-safe. Transport cache ownership/lifetime remains
+open. Android device
 JNI/protect/bind, handover/reload, runtime/probe selection with sing-box TUN/routing,
 SOCKS UDP/mask chains and performance gates remain open.
 
@@ -49,3 +50,67 @@ Validation: CI506/run39446460854 succeeded for code
 with the source-preparation, JVM lifecycle, AAR/API/JNI and Android packaging gates.
 Artifact12276359097 independently contains matching hashes for both committed
 patches and the contextual lookup in JNI; APK native bytes match the candidate AAR.
+
+
+## 2026-10-20 — owned system DNS
+
+The third checksum-recorded patch, xray-owned-system-dns.patch, routes core default
+DNS, explicit localhost DNS, freedom final-rule resolution and UDP fallback
+resolution through the permanent dispatcher and its session owner. Default DNS
+supports contextual lookup without changing the legacy public DNS interface.
+Protected owners use the selected Android provider's A/AAAA callback; failures,
+missing owners and retired network generations never fall back to OS DNS. Host
+owners deliberately retain cancellable system DNS. DNS operations participate in
+the same epoch cancellation registry as pending socket operations.
+
+Protected execution rejects DNS +local transports before initialization and
+SRV/TXT socket strategies before stock record resolution: the current Android
+provider only implements A/AAAA. It also rejects unreviewed finalmask types before
+core construction, including nested download settings; only header-custom and
+salamander currently have reviewed wire fixtures. Import retention is unaffected.
+This is a restriction on the experimental protected executor, not a claim of
+universal full-JSON Android compatibility.
+
+Domain strategy and Happy Eyeballs are consumed by Xray before a concrete IP
+socket reaches the provider. The bridge permits these already-applied settings;
+other native socket options still fail closed. Integration tests exercise real
+SOCKS exchanges with default and localhost DNS, change the owner resolver to a
+second loopback server on network replacement, reject lookups after Stop, cancel
+pending DNS on suspend, filter address families and reject direct-DNS/mask modes
+before network callbacks. Local combined tests passed -race -count=3; Android CI
+validation is recorded separately after completion.
+
+Next transport audit: gRPC's fresh dial callback context currently loses owner
+identity; transport caches (gRPC, split-HTTP/Xmux, Hysteria and ECH HTTP clients)
+need owner-scoped lifetime and cleanup. These findings remain open, along with
+Android device execution, SOCKS UDP/masks, performance and production activation.
+
+
+### Transport audit acceptance criteria — 21 October 2026
+
+Preserve socket-owner identity and the instance feature scope in gRPC-generated
+dial contexts, together with gRPC's own cancellation/deadline, without retaining
+a completed application request's cancellation. Cache insertion and retirement
+must be race-safe: no callbacks under cache locks, no insertion after retirement,
+no cross-instance reuse and no retained entries keeping stopped owners alive.
+Do not reset process-global caches on every Start/Stop.
+
+Regressions must cover identical endpoints/configurations in two owners, Stop of
+one while the other continues real traffic, retirement racing insertion, failed
+connect/retry, network loss/resume with changed DNS and repeated Start/Stop with
+bounded resources. Cover gRPC first, then split-HTTP/Xmux, Hysteria and ECH. Keep
+the combined -race -count=3 and Android AAR/API/JNI/packaging gates.
+
+
+PR42 validation — 21 October 2026: code
+`320fbda6b597dc2f58735b0e8c49a2dedfaac461` passed CI508/run39452695392,
+attempt 2: combined Go -race -count=3, four source-preparation regressions, JVM
+lifecycle tests, complete production-feature AAR, unchanged Libbox API/JNI and
+Android app/native packaging checks. Attempt 1 failed fetching Kotlin's Maven BOM;
+no code or check was changed to obtain the passing retry.
+Independent inspection of artifact12280616559 confirmed all three patch hashes,
+ResolveSystemDomain in JNI and identical AAR/APK native bytes.
+JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
+Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
+Later PR42 changes are documentation only. No device execution or production
+activation is claimed. Next implementation remains gRPC context/cache ownership.

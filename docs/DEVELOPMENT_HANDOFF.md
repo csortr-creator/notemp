@@ -1,4 +1,4 @@
-# Development handoff — 20 October 2026
+# Development handoff — 21 October 2026
 
 This file and [the migration plan](../XRAY_MIGRATION_PLAN.md) are the repository
 entry points for continuing after a workspace or account change. Fetch the latest
@@ -17,7 +17,26 @@ release remain gated on the Android/runtime/device checks below.
 
 ## Verified checkpoint
 
-Latest completed gate: PR38, branch `fix/composite-production-parity`, tested code
+Latest completed implementation: PR42, code
+`320fbda6b597dc2f58735b0e8c49a2dedfaac461`. CI508/run39452695392, attempt 2,
+completed SUCCESS. The first attempt could not retrieve Kotlin's Maven BOM;
+the same unchanged code passed on retry. The third reproducible Xray patch routes
+reviewed default/localhost, freedom and UDP fallback DNS through the session's
+network provider, with epoch cancellation and no OS fallback for protected owners.
+Direct +local DNS, SRV/TXT and unreviewed masks are rejected before unsafe network
+work in the experimental protected executor. Import retention is unaffected.
+
+Next implementation: gRPC dial callback owner/context preservation, then transport
+cache ownership and retirement (gRPC, split-HTTP/Xmux, Hysteria, ECH). Required
+checks include two independent instances at identical endpoints, stopping one
+without disrupting the other, concurrent cache insertion/retirement, retries,
+network loss/recovery and repeated Start/Stop resource bounds. Never reset global
+caches on every bridge Stop. See xray-instance-isolation.md. Device execution,
+SOCKS UDP/masks, performance and production executor selection remain open.
+
+### Earlier checkpoint: PR38
+
+Completed gate: PR38, branch `fix/composite-production-parity`, tested code
 `1cb1b1cfea6059312b171af48e3229f9aab954a7`. CI498/run39430917424 completed SUCCESS.
 It uses the actual production Android builder and SagerNet gomobile v0.1.13,
 23 production feature tags, API 24 and libbox.so. Go redacts linker metadata under
@@ -81,7 +100,8 @@ python3 scripts/prepare_xray_core.py
 The script downloads the exact official module version/checksum recorded in
 `libbox/xraybridge/go.mod` and `go.sum`, copies source into ignored `xray-core/`,
 and applies the ordered `patches/xray-hysteria-session-close.patch` and
-`patches/xray-instance-dialer-features.patch` chain. It never edits the Go module
+`patches/xray-instance-dialer-features.patch`, followed by
+`patches/xray-owned-system-dns.patch`. It never edits the Go module
 cache. It verifies source and patch digests when reusing the output and
 rejects/preserves unknown or modified output. Do not remove those guards.
 
@@ -226,3 +246,32 @@ Subsequent PR41 changes only record evidence in documentation. DNS/outbound feat
 isolation is addressed for the reviewed paths; do not interpret this as arbitrary
 full Xray JSON being safe for Android. Next audit: protected client-config/direct-DNS
 paths and transport-cache lifetime, followed by device/UDP/performance/activation.
+
+
+### 2026-10-20 — owned system DNS (current gate)
+
+Implemented a third reproducible Xray patch for session-owned default/localhost,
+freedom and UDP-fallback DNS. Protected A/AAAA uses the Android network provider
+and shares epoch cancellation with socket operations. Missing/retired owners fail
+closed. Direct +local DNS, SRV/TXT and unreviewed masks are rejected in protected
+execution before unsafe network work. Import retention is unchanged. Real SOCKS
+DNS/handover regressions and the combined Go suite passed -race -count=3; all four
+source-preparation regressions passed. Android CI evidence will follow separately.
+See docs/xray-instance-isolation.md for the exact scope.
+Next: preserve gRPC dial callback owner context and retire owner-scoped transport
+caches. Device JNI/protect/bind/handover, UDP/masks, performance and production
+activation remain unverified; do not activate the executor based on host tests.
+
+
+PR42 validation — 21 October 2026: code
+`320fbda6b597dc2f58735b0e8c49a2dedfaac461` passed CI508/run39452695392,
+attempt 2: combined Go -race -count=3, four source-preparation regressions, JVM
+lifecycle tests, complete production-feature AAR, unchanged Libbox API/JNI and
+Android app/native packaging checks. Attempt 1 failed fetching Kotlin's Maven BOM;
+no code or check was changed to obtain the passing retry.
+Independent inspection of artifact12280616559 confirmed all three patch hashes,
+ResolveSystemDomain in JNI and identical AAR/APK native bytes.
+JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
+Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
+Later PR42 changes are documentation only. No device execution or production
+activation is claimed. Next implementation remains gRPC context/cache ownership.

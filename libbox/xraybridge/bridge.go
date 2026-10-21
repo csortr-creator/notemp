@@ -83,6 +83,11 @@ func (b *Bridge) start(ctx context.Context, configJSON []byte, protect socketPro
 	if err := validateBridgePolicy(configJSON); err != nil {
 		return err
 	}
+	if protected {
+		if err := validateProtectedMasks(configJSON); err != nil {
+			return err
+		}
+	}
 	config, err := serial.DecodeJSONConfig(bytes.NewReader(configJSON))
 	if err != nil {
 		return errors.New("XRAY_CONFIG_DECODE_FAILED")

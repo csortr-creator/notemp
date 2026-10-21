@@ -187,7 +187,7 @@ func TestProtectedDialerRejectsUnsupportedOptions(t *testing.T) {
 		t.Fatal("opened socket for unsupported options")
 		return nil
 	}
-	if _, err := d.Dial(context.Background(), nil, dest, &internet.SocketConfig{}); !errors.Is(err, errSocketOptions) {
+	if _, err := d.Dial(context.Background(), nil, dest, &internet.SocketConfig{Mark: 1}); !errors.Is(err, errSocketOptions) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

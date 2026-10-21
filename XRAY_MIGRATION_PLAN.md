@@ -1,4 +1,4 @@
-# Xray executor migration — 20 October 2026
+# Xray executor migration — 21 October 2026
 
 Production Android still uses pinned sing-box1.14.2 plus24 patches. Xray remains
 an isolated experimental module; no imported server or production probe uses it.
@@ -11,7 +11,8 @@ The bridge now uses official Xray tag `v26.9.9`, commit
 `go get ...@v26.9.9` because this module does not have a `/v26` path. Resolving
 its actual commit produces the canonical pseudo-version and checksum pin.
 This source requires Go 1.27, independently of the production Android build.
-It now additionally uses the reviewed local Hysteria close-race patch. Prepare
+It additionally applies three ordered reviewed patches: Hysteria close-race,
+instance DNS/outbound isolation, and owned system DNS. Prepare
 `xray-core/` with `python3 scripts/prepare_xray_core.py` before either Go module.
 The source checksum, patch digest and full prepared source digests are verified;
 the Go module cache stays immutable. This is a patched pin, not an unmodified tag.
@@ -45,8 +46,8 @@ core, not the obsolete checked-in `libbox/go.mod`.
   invalid resolver output and unsupported options. One permanent dispatcher is
   installed during package initialization; there is no per-instance global setter
   or reset API. It requires an explicit
-  resolver for domains, resolves before creating UDP sockets, and rejects socket
-  options until their semantics are implemented. The future Android owner must
+  resolver for domains, resolves before creating UDP sockets, and rejects native socket
+  options except already-consumed DNS strategy and IP scheduling settings. The future Android owner must
   protect and bind sockets AND provide DNS over the protected underlying network.
   These Linux callback tests are not Android/JNI protection evidence.
 - A private `networkSession` now owns immutable callback generations: replacing
@@ -252,3 +253,32 @@ gates. Independent inspection of artifact12276359097 confirmed both committed
 patch hashes in provenance, the contextual lookup compiled into JNI and exact
 AAR/APK native equality. This closes the reviewed DNS/outbound-manager isolation
 gate; protected config/DNS-path constraints and remaining activation gates stay open.
+
+
+### 2026-10-20 — owned system DNS (current gate)
+
+Implemented a third reproducible Xray patch for session-owned default/localhost,
+freedom and UDP-fallback DNS. Protected A/AAAA uses the Android network provider
+and shares epoch cancellation with socket operations. Missing/retired owners fail
+closed. Direct +local DNS, SRV/TXT and unreviewed masks are rejected in protected
+execution before unsafe network work. Import retention is unchanged. Real SOCKS
+DNS/handover regressions and the combined Go suite passed -race -count=3; all four
+source-preparation regressions passed. Android CI evidence will follow separately.
+See docs/xray-instance-isolation.md for the exact scope.
+Next: preserve gRPC dial callback owner context and retire owner-scoped transport
+caches. Device JNI/protect/bind/handover, UDP/masks, performance and production
+activation remain unverified; do not activate the executor based on host tests.
+
+
+PR42 validation — 21 October 2026: code
+`320fbda6b597dc2f58735b0e8c49a2dedfaac461` passed CI508/run39452695392,
+attempt 2: combined Go -race -count=3, four source-preparation regressions, JVM
+lifecycle tests, complete production-feature AAR, unchanged Libbox API/JNI and
+Android app/native packaging checks. Attempt 1 failed fetching Kotlin's Maven BOM;
+no code or check was changed to obtain the passing retry.
+Independent inspection of artifact12280616559 confirmed all three patch hashes,
+ResolveSystemDomain in JNI and identical AAR/APK native bytes.
+JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
+Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
+Later PR42 changes are documentation only. No device execution or production
+activation is claimed. Next implementation remains gRPC context/cache ownership.
