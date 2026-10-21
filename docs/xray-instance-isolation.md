@@ -150,3 +150,28 @@ failed against the first draft, which prioritized owner context internals, and
 passed after preserving the operation's cancellation internals while explicitly
 binding the feature scope. The superseded CI510 was cancelled before final
 validation; only the subsequent final-code run is acceptance evidence.
+
+
+Next split-HTTP/Xmux audit notes: upstream XmuxManager assumes the global dialer
+map lock serializes GetXmuxClient and has no retirement method. Adding Close needs
+its own synchronization and a retired state; reject late selection/creation and
+close clients outside locks. DefaultDialerClient.Close currently closes HTTP/3
+only. HTTP/1 and HTTP/2 idle transports and in-flight requests (which deliberately
+use context.WithoutCancel) also need an explicit ownership/retirement contract.
+A generic registry alone cannot prove those HTTP requests or pools are released.
+
+
+PR43 validation — 21 October 2026: final code
+`2b73e9efe85ac373b48b11d9b5c564b27482340f` passed CI511/run39542101838.
+All combined Go tests passed -race -count=3, including five resource/context/gRPC
+regression functions. Four source-preparation tests, JVM lifecycle tests, the
+complete production-feature AAR and unchanged Libbox API/JNI comparison, Android
+application compilation/packaging and native identity checks passed.
+Independent inspection of artifact12320626101 confirmed all four committed patch
+hashes, compiled AcquireSystemDialerResource/ContextWithSystemDialerOwner symbols,
+and byte-identical AAR/APK native libraries.
+JNI SHA256: 23898d58537530c8d9565b336c9346010d33f90eb93b29b1ba464e6e8c2fd881.
+Archive SHA256: cc2cf309ec0fd1734d7ebd5dd8d0a37afb4b65a07dc45a0c3fbbe9bccd48944a.
+Subsequent PR43 changes only record evidence/documentation. Next implementation:
+split-HTTP/Xmux lifetime and HTTP pool/request cleanup, then Hysteria/ECH. Device
+execution, UDP/mask, performance and production activation remain open gates.
