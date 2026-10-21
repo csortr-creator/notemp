@@ -11,8 +11,8 @@ The bridge now uses official Xray tag `v26.9.9`, commit
 `go get ...@v26.9.9` because this module does not have a `/v26` path. Resolving
 its actual commit produces the canonical pseudo-version and checksum pin.
 This source requires Go 1.27, independently of the production Android build.
-It additionally applies three ordered reviewed patches: Hysteria close-race,
-instance DNS/outbound isolation, and owned system DNS. Prepare
+It additionally applies four ordered reviewed patches: Hysteria close-race,
+instance DNS/outbound isolation, owned system DNS, and gRPC owner resources. Prepare
 `xray-core/` with `python3 scripts/prepare_xray_core.py` before either Go module.
 The source checksum, patch digest and full prepared source digests are verified;
 the Go module cache stays immutable. This is a patched pin, not an unmodified tag.
@@ -282,3 +282,31 @@ JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
 Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
 Later PR42 changes are documentation only. No device execution or production
 activation is claimed. Next implementation remains gRPC context/cache ownership.
+
+
+### 2026-10-21 — gRPC owner/cache implementation
+
+Added a fourth ordered source patch for per-instance gRPC resources and callback
+context ownership. Retirement cancels pending work and closes cached clients;
+late/duplicate creations cannot leak into the retired cache. The cached callback
+uses instance base values and retains the operation's deadline/cancellation.
+Five new regression functions include real two-owner protected SOCKS/VLESS/gRPC
+traffic with loss/recovery and Stop isolation. See xray-instance-isolation.md.
+Next transport targets: split-HTTP/Xmux, Hysteria and ECH cache/request lifetime.
+Android device and production activation gates remain open. Final CI511 evidence is recorded below.
+
+
+PR43 validation — 21 October 2026: final code
+`2b73e9efe85ac373b48b11d9b5c564b27482340f` passed CI511/run39542101838.
+All combined Go tests passed -race -count=3, including five resource/context/gRPC
+regression functions. Four source-preparation tests, JVM lifecycle tests, the
+complete production-feature AAR and unchanged Libbox API/JNI comparison, Android
+application compilation/packaging and native identity checks passed.
+Independent inspection of artifact12320626101 confirmed all four committed patch
+hashes, compiled AcquireSystemDialerResource/ContextWithSystemDialerOwner symbols,
+and byte-identical AAR/APK native libraries.
+JNI SHA256: 23898d58537530c8d9565b336c9346010d33f90eb93b29b1ba464e6e8c2fd881.
+Archive SHA256: cc2cf309ec0fd1734d7ebd5dd8d0a37afb4b65a07dc45a0c3fbbe9bccd48944a.
+Subsequent PR43 changes only record evidence/documentation. Next implementation:
+split-HTTP/Xmux lifetime and HTTP pool/request cleanup, then Hysteria/ECH. Device
+execution, UDP/mask, performance and production activation remain open gates.

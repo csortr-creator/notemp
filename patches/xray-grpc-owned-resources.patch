@@ -1,0 +1,252 @@
+diff --git a/transport/internet/grpc/dial.go b/transport/internet/grpc/dial.go
+--- a/transport/internet/grpc/dial.go
++++ b/transport/internet/grpc/dial.go
+@@ -2,6 +2,7 @@
+ 
+ import (
+ 	"context"
++	"io"
+ 	"reflect"
+ 	"sync"
+ 	"time"
+@@ -75,20 +76,51 @@
+ }
+ 
+ func getGrpcClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (*grpc.ClientConn, error) {
++	resource, owned, err := internet.AcquireSystemDialerResource(ctx, dialerConf{dest, streamSettings}, func() (io.Closer, error) {
++		client, err := newGrpcClient(ctx, dest, streamSettings)
++		if err != nil {
++			return nil, err
++		}
++		return client, nil
++	})
++	if owned {
++		if err != nil {
++			return nil, err
++		}
++		return resource.(*grpc.ClientConn), nil
++	}
+ 	globalDialerAccess.Lock()
+ 	defer globalDialerAccess.Unlock()
+-
+ 	if globalDialerMap == nil {
+ 		globalDialerMap = make(map[dialerConf]*grpc.ClientConn)
+ 	}
++	key := dialerConf{dest, streamSettings}
++	if client := globalDialerMap[key]; client != nil && client.GetState() != connectivity.Shutdown {
++		return client, nil
++	}
++	client, err := newGrpcClient(ctx, dest, streamSettings)
++	if err == nil {
++		globalDialerMap[key] = client
++	}
++	return client, err
++}
++
++func newGrpcClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (*grpc.ClientConn, error) {
++	// Keep only explicit immutable dial metadata from the request. The cached
++	// reconnect callback must not retain the request context or mutable outbound.
++	id := c.IDFromContext(ctx)
++	var outbounds []*session.Outbound
++	for _, outbound := range session.OutboundsFromContext(ctx) {
++		if outbound != nil {
++			copy := *outbound
++			outbounds = append(outbounds, &copy)
++		}
++	}
++	ctx = internet.SystemDialerOwnerBase(ctx)
+ 	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
+ 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
+ 	sockopt := streamSettings.SocketSettings
+ 	grpcSettings := streamSettings.ProtocolSettings.(*Config)
+-
+-	if client, found := globalDialerMap[dialerConf{dest, streamSettings}]; found && client.GetState() != connectivity.Shutdown {
+-		return client, nil
+-	}
+ 
+ 	dialOptions := []grpc.DialOption{
+ 		grpc.WithConnectParams(grpc.ConnectParams{
+@@ -120,8 +152,10 @@
+ 			}
+ 			address := net.ParseAddress(rawHost)
+ 
+-			gctx = c.ContextWithID(gctx, c.IDFromContext(ctx))
+-			gctx = session.ContextWithOutbounds(gctx, session.OutboundsFromContext(ctx))
++			gctx, releaseOwner := internet.ContextWithSystemDialerOwner(gctx, ctx)
++			defer releaseOwner()
++			gctx = c.ContextWithID(gctx, id)
++			gctx = session.ContextWithOutbounds(gctx, outbounds)
+ 			gctx = session.ContextWithTimeoutOnly(gctx, true)
+ 
+ 			c, err := internet.DialSystem(gctx, net.TCPDestination(address, port), sockopt)
+@@ -202,7 +236,6 @@
+ 		setUserAgent(conn, userAgent)
+ 		conn.Connect()
+ 	}
+-	globalDialerMap[dialerConf{dest, streamSettings}] = conn
+ 	return conn, err
+ }
+ 
+diff --git a/transport/internet/system_dialer_resources.go b/transport/internet/system_dialer_resources.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/system_dialer_resources.go
+@@ -0,0 +1,104 @@
++package internet
++
++import (
++	"context"
++	"errors"
++	"io"
++)
++
++var errSystemDialerRetired = errors.New("system dialer resource owner retired")
++
++// AcquireSystemDialerResource caches only within the instance scope. Factories
++// and Close callbacks run outside the lock and may reenter owner operations.
++// The bool distinguishes an explicit owner from legacy unscoped callers.
++func AcquireSystemDialerResource(ctx context.Context, key any, create func() (io.Closer, error)) (io.Closer, bool, error) {
++	scope, owned := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope)
++	if !owned {
++		return nil, false, nil
++	}
++	scope.resourcesMu.Lock()
++	if scope.retired.Load() || ctx.Err() != nil {
++		scope.resourcesMu.Unlock()
++		if ctx.Err() != nil {
++			return nil, true, ctx.Err()
++		}
++		return nil, true, errSystemDialerRetired
++	}
++	resource := scope.resources[key]
++	scope.resourcesMu.Unlock()
++	if resource != nil {
++		return resource, true, nil
++	}
++	candidate, err := create()
++	if err != nil {
++		if candidate != nil {
++			_ = candidate.Close()
++		}
++		return nil, true, err
++	}
++	if candidate == nil {
++		return nil, true, errors.New("nil system dialer resource")
++	}
++	scope.resourcesMu.Lock()
++	if scope.retired.Load() || ctx.Err() != nil {
++		scope.resourcesMu.Unlock()
++		_ = candidate.Close()
++		if ctx.Err() != nil {
++			return nil, true, ctx.Err()
++		}
++		return nil, true, errSystemDialerRetired
++	}
++	winner := scope.resources[key]
++	if winner == nil {
++		scope.resources[key] = candidate
++	}
++	scope.resourcesMu.Unlock()
++	if winner != nil {
++		_ = candidate.Close()
++		return winner, true, nil
++	}
++	return candidate, true, nil
++}
++
++type systemDialerOperationContext struct {
++	context.Context
++	owner context.Context
++}
++
++func (c systemDialerOperationContext) Value(key any) any {
++	// Preserve operation internals (notably context.Cause's cancellation key).
++	// Bind the feature scope explicitly; other instance-base values are fallback
++	// values for gRPC's fresh, otherwise unowned operation context.
++	if _, scopeKey := key.(systemDialerScopeKey); scopeKey {
++		return c.owner.Value(key)
++	}
++	if value := c.Context.Value(key); value != nil {
++		return value
++	}
++	return c.owner.Value(key)
++}
++
++// A cached transport must use its instance base values, never the first
++// request's values/cancellation. Preserve the operation deadline/cancellation,
++// and additionally cancel pending work when the instance retires.
++func ContextWithSystemDialerOwner(operation, caller context.Context) (context.Context, context.CancelFunc) {
++	scope, owned := caller.Value(systemDialerScopeKey{}).(*systemDialerScope)
++	if !owned {
++		return operation, func() {}
++	}
++	ctx, cancel := context.WithCancel(operation)
++	stop := context.AfterFunc(scope.owner, cancel)
++	if scope.owner.Err() != nil {
++		cancel()
++	}
++	return systemDialerOperationContext{Context: ctx, owner: scope.owner}, func() { stop(); cancel() }
++}
++
++// SystemDialerOwnerBase drops request values/cancellation for retained transports.
++// Legacy callers retain their pre-existing context behavior.
++func SystemDialerOwnerBase(ctx context.Context) context.Context {
++	if scope, ok := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope); ok {
++		return scope.owner
++	}
++	return ctx
++}
+diff --git a/transport/internet/system_dialer_scope.go b/transport/internet/system_dialer_scope.go
+--- a/transport/internet/system_dialer_scope.go
++++ b/transport/internet/system_dialer_scope.go
+@@ -3,6 +3,8 @@
+ import (
+ 	"context"
+ 	"errors"
++	"io"
++	"sync"
+ 	"sync/atomic"
+ 
+ 	"github.com/xtls/xray-core/features/dns"
+@@ -15,15 +17,23 @@
+ 	obm outbound.Manager
+ }
+ type systemDialerScope struct {
+-	features atomic.Pointer[systemDialerFeatures]
+-	retired  atomic.Bool
++	features    atomic.Pointer[systemDialerFeatures]
++	retired     atomic.Bool
++	owner       context.Context
++	cancel      context.CancelFunc
++	resourcesMu sync.Mutex
++	resources   map[any]io.Closer
+ }
+ 
+ var legacySystemDialerFeatures atomic.Pointer[systemDialerFeatures]
+ 
+ // ContextWithSystemDialerScope allocates one feature namespace per core instance.
+ func ContextWithSystemDialerScope(ctx context.Context) context.Context {
+-	return context.WithValue(ctx, systemDialerScopeKey{}, &systemDialerScope{})
++	lifetime, cancel := context.WithCancel(ctx)
++	scope := &systemDialerScope{cancel: cancel, resources: make(map[any]io.Closer)}
++	owned := context.WithValue(lifetime, systemDialerScopeKey{}, scope)
++	scope.owner = owned
++	return owned
+ }
+ 
+ // ContextWithSystemDialerScopeFrom binds caller context to the instance namespace.
+@@ -54,6 +64,14 @@
+ 	if scope, ok := ctx.Value(systemDialerScopeKey{}).(*systemDialerScope); ok {
+ 		scope.retired.Store(true)
+ 		scope.features.Store(nil)
++		scope.cancel()
++		scope.resourcesMu.Lock()
++		resources := scope.resources
++		scope.resources = nil
++		scope.resourcesMu.Unlock()
++		for _, resource := range resources {
++			_ = resource.Close()
++		}
+ 	}
+ }
+ 

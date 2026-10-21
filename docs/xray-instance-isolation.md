@@ -114,3 +114,64 @@ JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
 Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
 Later PR42 changes are documentation only. No device execution or production
 activation is claimed. Next implementation remains gRPC context/cache ownership.
+
+
+## 2026-10-21 — gRPC instance-owned connections
+
+The fourth ordered patch, xray-grpc-owned-resources.patch, moves gRPC clients for
+scoped core instances out of the process-global map into their instance's resource
+registry. Core retirement cancels pending transport operations, removes the registry
+and closes resources outside its lock. Creation also runs outside that lock;
+concurrent candidates converge on one winner, losers close, and candidates that
+finish after retirement or request cancellation close without insertion. Legacy
+unscoped callers keep the upstream map.
+
+The gRPC reconnect callback retains the instance base context, with a snapshot of
+explicit dial metadata, rather than the first application's request context. Its
+fresh operation context preserves the gRPC deadline/cancellation and adds owner
+identity, DNS/outbound scope and owner-retirement cancellation. It never borrows
+another instance's state or resets another owner's cache on Stop.
+
+New regressions cover identical resource keys across owners, reentrant Close,
+failed construction/retry, concurrent successful candidates, cancellation before
+insertion, 120 creation/retirement races, context values/deadlines/cancellation,
+and real SOCKS -> VLESS/gRPC -> destination traffic through two simultaneous
+protected bridges. The wire test suspends A, keeps B's existing stream alive,
+resumes A using a different loopback server address, stops A, and checks B again.
+These are host callback fixtures, not Android device protection evidence.
+
+Remaining transport work: apply ownership/retirement to split-HTTP/Xmux, Hysteria
+and ECH clients/requests. This patch does not claim those caches are fixed. Device
+JNI/protect/bind/handover, SOCKS UDP/mask, performance and production activation
+remain open. Full Android CI evidence is recorded after completion.
+
+The operation-context regression also checks a custom cancellation cause. It
+failed against the first draft, which prioritized owner context internals, and
+passed after preserving the operation's cancellation internals while explicitly
+binding the feature scope. The superseded CI510 was cancelled before final
+validation; only the subsequent final-code run is acceptance evidence.
+
+
+Next split-HTTP/Xmux audit notes: upstream XmuxManager assumes the global dialer
+map lock serializes GetXmuxClient and has no retirement method. Adding Close needs
+its own synchronization and a retired state; reject late selection/creation and
+close clients outside locks. DefaultDialerClient.Close currently closes HTTP/3
+only. HTTP/1 and HTTP/2 idle transports and in-flight requests (which deliberately
+use context.WithoutCancel) also need an explicit ownership/retirement contract.
+A generic registry alone cannot prove those HTTP requests or pools are released.
+
+
+PR43 validation — 21 October 2026: final code
+`2b73e9efe85ac373b48b11d9b5c564b27482340f` passed CI511/run39542101838.
+All combined Go tests passed -race -count=3, including five resource/context/gRPC
+regression functions. Four source-preparation tests, JVM lifecycle tests, the
+complete production-feature AAR and unchanged Libbox API/JNI comparison, Android
+application compilation/packaging and native identity checks passed.
+Independent inspection of artifact12320626101 confirmed all four committed patch
+hashes, compiled AcquireSystemDialerResource/ContextWithSystemDialerOwner symbols,
+and byte-identical AAR/APK native libraries.
+JNI SHA256: 23898d58537530c8d9565b336c9346010d33f90eb93b29b1ba464e6e8c2fd881.
+Archive SHA256: cc2cf309ec0fd1734d7ebd5dd8d0a37afb4b65a07dc45a0c3fbbe9bccd48944a.
+Subsequent PR43 changes only record evidence/documentation. Next implementation:
+split-HTTP/Xmux lifetime and HTTP pool/request cleanup, then Hysteria/ECH. Device
+execution, UDP/mask, performance and production activation remain open gates.

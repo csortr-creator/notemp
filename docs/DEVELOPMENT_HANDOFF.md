@@ -17,7 +17,27 @@ release remain gated on the Android/runtime/device checks below.
 
 ## Verified checkpoint
 
-Latest completed implementation: PR42, code
+Latest completed gate: PR43, code
+`2b73e9efe85ac373b48b11d9b5c564b27482340f`, CI511/run39542101838 SUCCESS.
+The gRPC callback now carries its instance's network identity and feature scope,
+preserves the operation deadline/custom cancellation cause, and drops the first
+request's context from the retained reconnect callback. gRPC connections use an
+instance-owned resource registry; retirement cancels work, clears the registry
+and closes resources outside locks. Late and duplicate candidates close without
+leaking into a retired cache. Other live instances retain their connections.
+
+Five new regression functions include real protected SOCKS/VLESS/gRPC traffic
+with two owners, loss/recovery to another loopback server and Stop isolation.
+Combined Go tests passed -race -count=3; the four source-ownership tests, JVM
+lifecycle, full AAR/API/JNI and Android app/packaging gates passed. The custom-cause
+regression failed on the previous draft and passed on this final version.
+CI510 was superseded; use CI511 as final-code evidence. Next: split-HTTP/Xmux,
+then Hysteria and ECH cache/request ownership; see xray-instance-isolation.md.
+No Android device execution or production activation is claimed.
+
+### Earlier checkpoint: PR42
+
+Completed implementation: PR42, code
 `320fbda6b597dc2f58735b0e8c49a2dedfaac461`. CI508/run39452695392, attempt 2,
 completed SUCCESS. The first attempt could not retrieve Kotlin's Maven BOM;
 the same unchanged code passed on retry. The third reproducible Xray patch routes
@@ -101,7 +121,8 @@ The script downloads the exact official module version/checksum recorded in
 `libbox/xraybridge/go.mod` and `go.sum`, copies source into ignored `xray-core/`,
 and applies the ordered `patches/xray-hysteria-session-close.patch` and
 `patches/xray-instance-dialer-features.patch`, followed by
-`patches/xray-owned-system-dns.patch`. It never edits the Go module
+`patches/xray-owned-system-dns.patch` and
+`patches/xray-grpc-owned-resources.patch`. It never edits the Go module
 cache. It verifies source and patch digests when reusing the output and
 rejects/preserves unknown or modified output. Do not remove those guards.
 
@@ -275,3 +296,31 @@ JNI SHA256: 5b5adf94c07b6a5f3dde7dd3bab2565054b64da36a60dd5c78291ddaed400b8a.
 Archive SHA256: 962602cb1ea81e5be64b8e1920e3d37b7131db898bafe83ba52eaa6cac0a0a82.
 Later PR42 changes are documentation only. No device execution or production
 activation is claimed. Next implementation remains gRPC context/cache ownership.
+
+
+### 2026-10-21 — gRPC owner/cache implementation
+
+Added a fourth ordered source patch for per-instance gRPC resources and callback
+context ownership. Retirement cancels pending work and closes cached clients;
+late/duplicate creations cannot leak into the retired cache. The cached callback
+uses instance base values and retains the operation's deadline/cancellation.
+Five new regression functions include real two-owner protected SOCKS/VLESS/gRPC
+traffic with loss/recovery and Stop isolation. See xray-instance-isolation.md.
+Next transport targets: split-HTTP/Xmux, Hysteria and ECH cache/request lifetime.
+Android device and production activation gates remain open. Final CI511 evidence is recorded below.
+
+
+PR43 validation — 21 October 2026: final code
+`2b73e9efe85ac373b48b11d9b5c564b27482340f` passed CI511/run39542101838.
+All combined Go tests passed -race -count=3, including five resource/context/gRPC
+regression functions. Four source-preparation tests, JVM lifecycle tests, the
+complete production-feature AAR and unchanged Libbox API/JNI comparison, Android
+application compilation/packaging and native identity checks passed.
+Independent inspection of artifact12320626101 confirmed all four committed patch
+hashes, compiled AcquireSystemDialerResource/ContextWithSystemDialerOwner symbols,
+and byte-identical AAR/APK native libraries.
+JNI SHA256: 23898d58537530c8d9565b336c9346010d33f90eb93b29b1ba464e6e8c2fd881.
+Archive SHA256: cc2cf309ec0fd1734d7ebd5dd8d0a37afb4b65a07dc45a0c3fbbe9bccd48944a.
+Subsequent PR43 changes only record evidence/documentation. Next implementation:
+split-HTTP/Xmux lifetime and HTTP pool/request cleanup, then Hysteria/ECH. Device
+execution, UDP/mask, performance and production activation remain open gates.
