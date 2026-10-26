@@ -29,7 +29,7 @@ new file mode 100644
 +	_, err := QueryRecord(context.Background(), "invalid.invalid", "udp://127.0.0.1:1", nil)
 +	_ = err
 +}
-Diff --git a/transport/internet/hysteria/dialer.go b/transport/internet/hysteria/dialer.go
+diff --git a/transport/internet/hysteria/dialer.go b/transport/internet/hysteria/dialer.go
 --- a/transport/internet/hysteria/dialer.go
 +++ b/transport/internet/hysteria/dialer.go
 @@ -328,7 +328,7 @@
