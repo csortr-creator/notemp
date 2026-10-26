@@ -1,0 +1,11 @@
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"bytes"
+ 	"context"
++	"io"
+ 	"crypto/tls"
+ 	"encoding/base64"
+ 	"encoding/binary"
