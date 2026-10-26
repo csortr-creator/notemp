@@ -1,0 +1,106 @@
+diff --git a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+--- a/transport/internet/splithttp/dialer.go
++++ b/transport/internet/splithttp/dialer.go
+@@ -44,11 +44,36 @@
+ 	globalDialerAccess sync.Mutex
+ )
+ 
+-func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (DialerClient, *XmuxClient) {
++func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (DialerClient, *XmuxClient, error) {
+ 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
+ 
+ 	if browser_dialer.HasBrowserDialer() && realityConfig == nil {
+-		return &BrowserDialerClient{transportConfig: streamSettings.ProtocolSettings.(*Config)}, nil
++		return &BrowserDialerClient{transportConfig: streamSettings.ProtocolSettings.(*Config)}, nil, nil
++	}
++
++	key := dialerConf{dest, streamSettings}
++	resource, owned, err := internet.AcquireSystemDialerResource(ctx, key, func() (io.Closer, error) {
++		transportConfig := streamSettings.ProtocolSettings.(*Config)
++		var xmuxConfig XmuxConfig
++		if transportConfig.Xmux != nil {
++			xmuxConfig = *transportConfig.Xmux
++		}
++		// Capture the instance base for retained dials; never the request cancellation.
++		ownerBase := internet.SystemDialerOwnerBase(ctx)
++		return NewXmuxManager(xmuxConfig, func() XmuxConn {
++			return createHTTPClient(ownerBase, dest, streamSettings)
++		}), nil
++	})
++	if owned {
++		if err != nil {
++			return nil, nil, err
++		}
++		xmuxManager := resource.(*XmuxManager)
++		xmuxClient := xmuxManager.GetXmuxClient(ctx)
++		if xmuxClient == nil {
++			return nil, nil, errors.New("Xmux manager retired")
++		}
++		return xmuxClient.XmuxConn.(DialerClient), xmuxClient, nil
+ 	}
+ 
+ 	globalDialerAccess.Lock()
+@@ -58,8 +83,6 @@
+ 		globalDialerMap = make(map[dialerConf]*XmuxManager)
+ 	}
+ 
+-	key := dialerConf{dest, streamSettings}
+-
+ 	xmuxManager, found := globalDialerMap[key]
+ 
+ 	if !found {
+@@ -70,13 +93,16 @@
+ 		}
+ 
+ 		xmuxManager = NewXmuxManager(xmuxConfig, func() XmuxConn {
+-			return createHTTPClient(dest, streamSettings)
++			return createHTTPClient(ctx, dest, streamSettings)
+ 		})
+ 		globalDialerMap[key] = xmuxManager
+ 	}
+ 
+ 	xmuxClient := xmuxManager.GetXmuxClient(ctx)
+-	return xmuxClient.XmuxConn.(DialerClient), xmuxClient
++	if xmuxClient == nil {
++		return nil, nil, errors.New("Xmux manager retired")
++	}
++	return xmuxClient.XmuxConn.(DialerClient), xmuxClient, nil
+ }
+ 
+ func decideHTTPVersion(tlsConfig *tls.Config, realityConfig *reality.Config) string {
+@@ -98,7 +124,7 @@
+ 	return "2"
+ }
+ 
+-func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStreamConfig) DialerClient {
++func createHTTPClient(ownerCtx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) DialerClient {
+ 	tlsConfig := tls.ConfigFromStreamSettings(streamSettings)
+ 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
+ 
+@@ -116,7 +142,9 @@
+ 	transportConfig := streamSettings.ProtocolSettings.(*Config)
+ 
+ 	dialContext := func(ctxInner context.Context) (net.Conn, error) {
+-		conn, err := internet.DialSystem(ctxInner, dest, streamSettings.SocketSettings)
++		dialCtx, releaseOwner := internet.ContextWithSystemDialerOwner(ctxInner, ownerCtx)
++		defer releaseOwner()
++		conn, err := internet.DialSystem(dialCtx, dest, streamSettings.SocketSettings)
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -131,13 +159,13 @@
+ 		}
+ 
+ 		if realityConfig != nil {
+-			return reality.UClient(conn, realityConfig, ctxInner, dest)
++			return reality.UClient(conn, realityConfig, dialCtx, dest)
+ 		}
+ 
+ 		if gotlsConfig != nil {
+ 			if fingerprint := tls.GetFingerprint(tlsConfig.Fingerprint); fingerprint != nil {
+ 				conn = tls.UClient(conn, gotlsConfig, fingerprint)
+-				if err := conn.(*tls.UConn).HandshakeContext(ctxInner); err != nil {
++				if err := conn.(*tls.UConn).HandshakeContext(dialCtx); err != nil {
+ 					return nil, err
+ 				}
+ 			} else {
