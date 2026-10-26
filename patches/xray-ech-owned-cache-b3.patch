@@ -1,0 +1,46 @@
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -197,14 +242,16 @@
+ 			tr := &http2.Transport{
+ 				IdleConnTimeout: net.ConnIdleTimeout,
+ 				ReadIdleTimeout: net.ChromeH2KeepAlivePeriod,
+-				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
++				DialTLSContext: func(dialCtx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+ 					dest, err := net.ParseDestination(network + ":" + addr)
+ 					if err != nil {
+ 						return nil, err
+ 					}
+ 					var conn net.Conn
+ 
+-					conn, err = internet.DialSystem(ctx, dest, sockopt)
++					ownedCtx, releaseOwner := internet.ContextWithSystemDialerOwner(dialCtx, ctx)
++					defer releaseOwner()
++					conn, err = internet.DialSystem(ownedCtx, dest, sockopt)
+ 					if err != nil {
+ 						return nil, err
+ 					}
+@@ -215,7 +262,7 @@
+ 							return nil, err
+ 						}
+ 						conn = utls.UClient(conn, &utls.Config{ServerName: u.Hostname()}, utls.HelloChrome_Auto)
+-						if err := conn.(*utls.UConn).HandshakeContext(ctx); err != nil {
++						if err := conn.(*utls.UConn).HandshakeContext(ownedCtx); err != nil {
+ 							return nil, err
+ 						}
+ 					}
+@@ -266,10 +313,12 @@
+ 		if err != nil {
+ 			return nil, 0, errors.New("failed to parse udp dns server ", udpServerURL.Host, " for ECH: ", err)
+ 		}
+-		dnsTimeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++		dnsTimeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+ 		defer cancel()
+ 		// use xray's internet.DialSystem as mentioned above
+-		conn, err := internet.DialSystem(dnsTimeoutCtx, dest, sockopt)
++		ownedCtx, releaseOwner := internet.ContextWithSystemDialerOwner(dnsTimeoutCtx, ctx)
++		defer releaseOwner()
++		conn, err := internet.DialSystem(ownedCtx, dest, sockopt)
+ 		if err != nil {
+ 			return nil, 0, err
+ 		}
