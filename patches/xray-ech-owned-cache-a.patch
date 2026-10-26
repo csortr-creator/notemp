@@ -1,0 +1,27 @@
+diff --git a/transport/internet/tls/config.go b/transport/internet/tls/config.go
+--- a/transport/internet/tls/config.go
++++ b/transport/internet/tls/config.go
+@@ -365,6 +365,11 @@
+ 
+ // GetTLSConfig converts this Config into tls.Config.
+ func (c *Config) GetTLSConfig(opts ...Option) *tls.Config {
++	return c.GetTLSConfigContext(context.Background(), opts...)
++}
++
++// GetTLSConfigContext is GetTLSConfig with an explicit owner context for ECH DNS/cache.
++func (c *Config) GetTLSConfigContext(ctx context.Context, opts ...Option) *tls.Config {
+ 	root, err := c.getCertPool()
+ 	if err != nil {
+ 		errors.LogErrorInner(context.Background(), err, "failed to load system root certificate")
+@@ -473,9 +478,9 @@
+ 		}
+ 	}
+ 	if len(c.EchConfigList) > 0 || len(c.EchServerKeys) > 0 {
+-		err := ApplyECH(c, config)
++		err := ApplyECH(ctx, c, config)
+ 		if err != nil {
+-			errors.LogError(context.Background(), err)
++			errors.LogError(ctx, err)
+ 		}
+ 	}
+ 
