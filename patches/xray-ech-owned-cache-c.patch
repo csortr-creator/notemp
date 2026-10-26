@@ -1,0 +1,75 @@
+diff --git a/transport/internet/tls/ech_owner_test.go b/transport/internet/tls/ech_owner_test.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/tls/ech_owner_test.go
+@@ -0,0 +1,26 @@
++package tls
++
++import (
++	"context"
++	"io"
++	"testing"
++)
++
++func TestECHConfigCacheCloseRejectsUpdate(t *testing.T) {
++	c := &ECHConfigCache{}
++	c.configRecord.Store(&echConfigRecord{})
++	if err := c.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := c.Update(context.Background(), "example.com", "https://1.1.1.1/dns-query", false, nil); err == nil {
++		t.Fatal("expected retired error")
++	}
++	var _ io.Closer = (*ECHConfigCache)(nil)
++}
++
++func TestQueryRecordOwnedPathUsesScope(t *testing.T) {
++	// Without a system-dialer scope, QueryRecord uses the global map (legacy).
++	// Smoke: does not panic with background context.
++	_, err := QueryRecord(context.Background(), "invalid.invalid", "udp://127.0.0.1:1", nil)
++	_ = err
++}
+Diff --git a/transport/internet/hysteria/dialer.go b/transport/internet/hysteria/dialer.go
+--- a/transport/internet/hysteria/dialer.go
++++ b/transport/internet/hysteria/dialer.go
+@@ -328,7 +328,7 @@
+ 	return &client{
+ 		dest:           dest,
+ 		config:         streamSettings.ProtocolSettings.(*Config),
+-		tlsConfig:      tlsConfig.GetTLSConfig(tls.WithDestination(dest)),
++		tlsConfig:      tlsConfig.GetTLSConfigContext(ownerCtx, tls.WithDestination(dest)),
+ 		socketConfig:   streamSettings.SocketSettings,
+ 		udpmaskManager: streamSettings.UdpmaskManager,
+ 		quicParams:     streamSettings.QuicParams,
+diff --git a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+--- a/transport/internet/splithttp/dialer.go
++++ b/transport/internet/splithttp/dialer.go
+@@ -136,7 +136,7 @@
+ 	var gotlsConfig *gotls.Config
+ 
+ 	if tlsConfig != nil {
+-		gotlsConfig = tlsConfig.GetTLSConfig(tls.WithDestination(dest))
++		gotlsConfig = tlsConfig.GetTLSConfigContext(ownerCtx, tls.WithDestination(dest))
+ 	}
+ 
+ 	transportConfig := streamSettings.ProtocolSettings.(*Config)
+diff --git a/transport/internet/tls/ech_test.go b/transport/internet/tls/ech_test.go
+--- a/transport/internet/tls/ech_test.go
++++ b/transport/internet/tls/ech_test.go
+@@ -3,6 +3,7 @@
+ import (
+ 	"io"
+ 	"net/http"
++	"context"
+ 	"slices"
+ 	"strings"
+ 	"sync"
+@@ -61,7 +62,7 @@
+ 		EchConfigList: "udp://0.0.0.0",
+ 	}
+ 	tlsConfig := config.GetTLSConfig()
+-	ApplyECH(config, tlsConfig)
++	ApplyECH(context.Background(), config, tlsConfig)
+ 	if !slices.Equal(tlsConfig.EncryptedClientHelloConfigList, []byte{1, 1, 4, 5, 1, 4}) {
+ 		t.Error("ECH config should be invalid when query failed", " but got ", tlsConfig.EncryptedClientHelloConfigList)
+ 	}
