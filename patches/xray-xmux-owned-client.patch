@@ -1,0 +1,69 @@
+diff --git a/transport/internet/splithttp/client.go b/transport/internet/splithttp/client.go
+--- a/transport/internet/splithttp/client.go
++++ b/transport/internet/splithttp/client.go
+@@ -11,6 +11,7 @@
+ 	"sync/atomic"
+ 
+ 	"github.com/apernet/quic-go/http3"
++	"golang.org/x/net/http2"
+ 	"github.com/xtls/xray-core/common"
+ 	"github.com/xtls/xray-core/common/buf"
+ 	"github.com/xtls/xray-core/common/errors"
+@@ -45,6 +46,9 @@
+ }
+ 
+ func (c *DefaultDialerClient) OpenStream(ctx context.Context, url string, sessionId string, body io.Reader, uploadOnly bool) (wrc io.ReadCloser, remoteAddr, localAddr net.Addr, err error) {
++	if c.closed.Load() {
++		return nil, nil, nil, errors.New("HTTP client closed")
++	}
+ 	// this is done when the TCP/UDP connection to the server was established,
+ 	// and we can unblock the Dial function and print correct net addresses in
+ 	// logs
+@@ -99,6 +103,9 @@
+ }
+ 
+ func (c *DefaultDialerClient) PostPacket(ctx context.Context, url string, sessionId string, seqStr string, payload buf.MultiBuffer) error {
++	if c.closed.Load() {
++		return errors.New("HTTP client closed")
++	}
+ 	method := c.transportConfig.GetNormalizedUplinkHTTPMethod()
+ 	req, err := http.NewRequestWithContext(context.WithoutCancel(ctx), method, url, nil)
+ 	if err != nil {
+@@ -178,11 +185,33 @@
+ 	return nil
+ }
+ 
+-// HTTP/1.1 and HTTP/2 will close itself, we only handle HTTP/3 here
++// Close marks the client unusable and releases idle HTTP/1, HTTP/2 and HTTP/3
++// transports plus pooled upload connections. In-flight requests that used
++// context.WithoutCancel are best-effort: bodies/pool sockets are closed.
+ func (c *DefaultDialerClient) Close() error {
+-	transport := c.client.Transport
+-	if h3Transport, ok := transport.(*http3.Transport); ok {
+-		h3Transport.Close()
++	c.closed.Store(true)
++	if c.client != nil {
++		transport := c.client.Transport
++		if h3Transport, ok := transport.(*http3.Transport); ok {
++			_ = h3Transport.Close()
++		}
++		if h2Transport, ok := transport.(*http2.Transport); ok {
++			h2Transport.CloseIdleConnections()
++		}
++		if h1Transport, ok := transport.(*http.Transport); ok {
++			h1Transport.CloseIdleConnections()
++		}
++	}
++	if c.uploadRawPool != nil {
++		for {
++			item := c.uploadRawPool.Get()
++			if item == nil {
++				break
++			}
++			if closer, ok := item.(io.Closer); ok {
++				_ = closer.Close()
++			}
++		}
+ 	}
+ 	return nil
+ }
