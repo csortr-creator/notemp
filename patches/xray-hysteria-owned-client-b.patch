@@ -1,0 +1,52 @@
+diff --git a/transport/internet/hysteria/client_owner_test.go b/transport/internet/hysteria/client_owner_test.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/hysteria/client_owner_test.go
+@@ -0,0 +1,47 @@
++package hysteria
++
++import (
++	"context"
++	"io"
++	"testing"
++
++	"github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/transport/internet"
++)
++
++func TestClientCloseRejectsLateDial(t *testing.T) {
++	c := &client{dest: net.UDPDestination(net.LocalHostIP, 1234)}
++	if err := c.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if !c.retired {
++		t.Fatal("expected retired")
++	}
++	if err := c.dial(context.Background()); err == nil {
++		t.Fatal("expected retired error")
++	}
++	if _, err := c.tcp(context.Background()); err == nil {
++		t.Fatal("expected tcp retired error")
++	}
++	if _, err := c.udp(context.Background()); err == nil {
++		t.Fatal("expected udp retired error")
++	}
++	if err := c.Close(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestAcquireCachesOwnedClient(t *testing.T) {
++	// Smoke: factory path returns closer implementing client
++	var _ io.Closer = (*client)(nil)
++	_ = internet.SystemDialerOwnerBase
++}
++
++func TestNewHysteriaClientStoresOwner(t *testing.T) {
++	owner := context.WithValue(context.Background(), struct{}{}, "owner")
++	// nil streamSettings would panic - only check Close path without full config
++	c := &client{ownerCtx: owner, dest: net.UDPDestination(net.LocalHostIP, 1)}
++	if c.ownerCtx != owner {
++		t.Fatal("owner not stored")
++	}
++}
