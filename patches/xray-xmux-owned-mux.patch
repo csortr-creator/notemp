@@ -1,0 +1,59 @@
+diff --git a/transport/internet/splithttp/mux.go b/transport/internet/splithttp/mux.go
+--- a/transport/internet/splithttp/mux.go
++++ b/transport/internet/splithttp/mux.go
+@@ -5,6 +5,7 @@
+ 	"crypto/rand"
+ 	"math"
+ 	"math/big"
++	"sync"
+ 	"sync/atomic"
+ 	"time"
+ 
+@@ -42,6 +43,8 @@
+ }
+ 
+ type XmuxManager struct {
++	mu          sync.Mutex
++	retired     bool
+ 	xmuxConfig  XmuxConfig
+ 	concurrency int32
+ 	connections int32
+@@ -59,6 +62,24 @@
+ 	}
+ }
+ 
++// Close retires the manager and closes all clients outside the lock.
++func (m *XmuxManager) Close() error {
++	m.mu.Lock()
++	if m.retired {
++		m.mu.Unlock()
++		return nil
++	}
++	m.retired = true
++	clients := m.xmuxClients
++	m.xmuxClients = nil
++	m.mu.Unlock()
++	for _, xmuxClient := range clients {
++		xmuxClient.NotUsed.Store(true)
++		common.Close(xmuxClient.XmuxConn)
++	}
++	return nil
++}
++
+ func (m *XmuxManager) newXmuxClient() *XmuxClient {
+ 	xmuxClient := &XmuxClient{
+ 		XmuxConn:  m.newConnFunc(),
+@@ -78,7 +99,12 @@
+ 	return xmuxClient
+ }
+ 
+-func (m *XmuxManager) GetXmuxClient(ctx context.Context) *XmuxClient { // when locking
++func (m *XmuxManager) GetXmuxClient(ctx context.Context) *XmuxClient {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	if m.retired {
++		return nil
++	}
+ 	for i := 0; i < len(m.xmuxClients); {
+ 		xmuxClient := m.xmuxClients[i]
+ 		if xmuxClient.XmuxConn.IsClosed() ||
