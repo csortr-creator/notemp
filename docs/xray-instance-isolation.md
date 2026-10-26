@@ -175,3 +175,30 @@ Archive SHA256: cc2cf309ec0fd1734d7ebd5dd8d0a37afb4b65a07dc45a0c3fbbe9bccd48944a
 Subsequent PR43 changes only record evidence/documentation. Next implementation:
 split-HTTP/Xmux lifetime and HTTP pool/request cleanup, then Hysteria/ECH. Device
 execution, UDP/mask, performance and production activation remain open gates.
+
+
+## 2026-10-26 — split-HTTP/Xmux, Hysteria and ECH ownership
+
+Ordered patches after gRPC complete the reviewed transport-cache ownership path:
+
+- **Xmux**: `xray-xmux-owned-mux|dialer-a|dialer-b|client|tests` — XmuxManager
+  retirement lock, owned `getHTTPClient` via AcquireSystemDialerResource, owner
+  base for retained dials (TCP/Reality/TLS and H3), DefaultDialerClient Close for
+  HTTP/1–3 idle pools with post-close reject, unit tests under -race.
+- **Hysteria**: `xray-hysteria-owned-client-a|b` — instance-owned `*client` cache,
+  Close retires QUIC/transport/pktConn, late dial/tcp/udp rejected, DialSystem
+  bound to owner context; legacy global clientManager remains for unscoped callers.
+- **ECH**: `xray-ech-owned-cache-a|b1|b2|b3|c` — GetTLSConfigContext, ApplyECH and
+  QueryRecord take owner context; scoped ECHConfigCache entries retire with the
+  instance; DOH/UDP dnsQuery DialSystem uses ContextWithSystemDialerOwner; owned
+  Hysteria/XHTTP call sites pass GetTLSConfigContext(ownerCtx).
+
+Source preparer now applies **16** ordered Xray patches. prepare unit tests assert
+the full chain. Local ownership regressions passed -race for Xmux, Hysteria and
+ECH cache Close. CI on `8b7e40fd7b77a7009eba15e9d2a2cec9a6cd7828` (run 40285417961)
+completed success for build and isolated Xray wire/composite proof.
+
+**Still open (not claimed fixed by these patches):** process-global
+`clientForECHDOH` idle HTTP clients for unscoped ECH DOH, Android device
+JNI/protect/bind/handover, SOCKS UDP/mask chains, performance, and production
+activation. Host wire fixtures are not device protection evidence.
