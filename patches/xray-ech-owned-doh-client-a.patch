@@ -1,0 +1,58 @@
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -234,9 +234,8 @@
+ 		if err != nil {
+ 			return nil, 0, err
+ 		}
+-		var client *http.Client
+ 		serverKey := ECHCacheKey(server, "", sockopt)
+-		if client, _ = clientForECHDOH.Load(serverKey); client == nil {
++		newDOHClient := func() *http.Client {
+ 			// All traffic sent by core should via xray's internet.DialSystem
+ 			// This involves the behavior of some Android VPN GUI clients
+ 			tr := &http2.Transport{
+@@ -269,10 +268,22 @@
+ 					return conn, nil
+ 				},
+ 			}
+-			c := &http.Client{
++			return &http.Client{
+ 				Timeout:   30 * time.Second,
+ 				Transport: tr,
+ 			}
++		}
++		var client *http.Client
++		resource, owned, err := internet.AcquireSystemDialerResource(ctx, "ech-doh|"+serverKey, func() (io.Closer, error) {
++			return &dohHTTPClient{client: newDOHClient()}, nil
++		})
++		if owned {
++			if err != nil {
++				return nil, 0, err
++			}
++			client = resource.(*dohHTTPClient).client
++		} else if client, _ = clientForECHDOH.Load(serverKey); client == nil {
++			c := newDOHClient()
+ 			client, _ = clientForECHDOH.LoadOrStore(serverKey, c)
+ 		}
+ 		req, err := http.NewRequest("POST", server, bytes.NewReader(msg))
+diff --git a/transport/internet/tls/ech_doh_owner_test.go b/transport/internet/tls/ech_doh_owner_test.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/tls/ech_doh_owner_test.go
+@@ -0,0 +1,15 @@
++package tls
++
++import (
++	"io"
++	"net/http"
++	"testing"
++)
++
++func TestDOHHTTPClientCloseIdle(t *testing.T) {
++	d := &dohHTTPClient{client: &http.Client{Transport: &http.Transport{}}}
++	if err := d.Close(); err != nil {
++		t.Fatal(err)
++	}
++	var _ io.Closer = (*dohHTTPClient)(nil)
++}
