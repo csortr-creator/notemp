@@ -1,0 +1,67 @@
+diff --git a/transport/internet/splithttp/dialer.go b/transport/internet/splithttp/dialer.go
+--- a/transport/internet/splithttp/dialer.go
++++ b/transport/internet/splithttp/dialer.go
+@@ -198,7 +226,9 @@
+ 				var pktConn net.PacketConn
+ 				var udpAddr *net.UDPAddr
+ 
+-				raw, err := internet.DialSystem(ctx, dest, streamSettings.SocketSettings)
++				dialCtx, releaseOwner := internet.ContextWithSystemDialerOwner(ctx, ownerCtx)
++				defer releaseOwner()
++				raw, err := internet.DialSystem(dialCtx, dest, streamSettings.SocketSettings)
+ 				if err != nil {
+ 					return nil, errors.New("failed to dial to dest").Base(err)
+ 				}
+@@ -229,7 +259,7 @@
+ 					tlsCfg.GetCertificate = nil
+ 				}
+ 
+-				conn, err := tr.DialEarly(ctx, udpAddr, tlsCfg, cfg)
++				conn, err := tr.DialEarly(dialCtx, udpAddr, tlsCfg, cfg)
+ 				if err != nil {
+ 					return nil, err
+ 				}
+@@ -331,7 +361,10 @@
+ 	requestURL.Path = transportConfiguration.GetNormalizedPath()
+ 	requestURL.RawQuery = transportConfiguration.GetNormalizedQuery()
+ 
+-	httpClient, xmuxClient := getHTTPClient(ctx, dest, streamSettings)
++	httpClient, xmuxClient, err := getHTTPClient(ctx, dest, streamSettings)
++	if err != nil {
++		return nil, err
++	}
+ 
+ 	mode := transportConfiguration.Mode
+ 	if mode == "" || mode == "auto" {
+@@ -395,7 +428,10 @@
+ 		}
+ 		requestURL2.Path = config2.GetNormalizedPath()
+ 		requestURL2.RawQuery = config2.GetNormalizedQuery()
+-		httpClient2, xmuxClient2 = getHTTPClient(ctx, dest2, memory2)
++		httpClient2, xmuxClient2, err = getHTTPClient(ctx, dest2, memory2)
++		if err != nil {
++			return nil, err
++		}
+ 		errors.LogInfo(ctx, fmt.Sprintf("XHTTP is downloading from %s, mode %s, HTTP version %s, host %s", dest2, "stream-down", httpVersion2, requestURL2.Host))
+ 	}
+ 
+@@ -423,7 +459,6 @@
+ 		},
+ 	}
+ 
+-	var err error
+ 	if mode == "stream-one" {
+ 		requestURL.Path = transportConfiguration.GetNormalizedPath()
+ 		if xmuxClient != nil {
+@@ -515,7 +550,10 @@
+ 
+ 				if dynamicXmuxClient != nil && (dynamicXmuxClient.LeftRequests.Add(-1) <= 0 ||
+ 					(dynamicXmuxClient.UnreusableAt != time.Time{} && lastWrite.After(dynamicXmuxClient.UnreusableAt))) {
+-					dynamicHTTPClient, dynamicXmuxClient = getHTTPClient(ctx, dest, streamSettings)
++					dynamicHTTPClient, dynamicXmuxClient, err = getHTTPClient(ctx, dest, streamSettings)
++					if err != nil {
++						return
++					}
+ 				}
+ 
+ 				go func(hClient DialerClient) {
