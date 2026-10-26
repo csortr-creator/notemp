@@ -1,0 +1,74 @@
+diff --git a/transport/internet/splithttp/mux_owner_test.go b/transport/internet/splithttp/mux_owner_test.go
+new file mode 100644
+--- /dev/null
++++ b/transport/internet/splithttp/mux_owner_test.go
+@@ -0,0 +1,69 @@
++package splithttp
++
++import (
++	"context"
++	"io"
++	"sync"
++	"sync/atomic"
++	"testing"
++)
++
++type fakeConn struct {
++	closed atomic.Bool
++}
++
++func (f *fakeConn) IsClosed() bool { return f.closed.Load() }
++func (f *fakeConn) Close() error {
++	f.closed.Store(true)
++	return nil
++}
++
++func TestXmuxManagerCloseRejectsLateSelection(t *testing.T) {
++	var created atomic.Int32
++	manager := NewXmuxManager(XmuxConfig{}, func() XmuxConn {
++		created.Add(1)
++		return &fakeConn{}
++	})
++	client := manager.GetXmuxClient(context.Background())
++	if client == nil {
++		t.Fatal("expected client")
++	}
++	if err := manager.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if !client.XmuxConn.(*fakeConn).closed.Load() {
++		t.Fatal("client not closed on manager Close")
++	}
++	if got := manager.GetXmuxClient(context.Background()); got != nil {
++		t.Fatal("retired manager returned a client")
++	}
++	if created.Load() != 1 {
++		t.Fatalf("factory ran after retirement: %d", created.Load())
++	}
++	if err := manager.Close(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestXmuxManagerCloseConcurrentGet(t *testing.T) {
++	manager := NewXmuxManager(XmuxConfig{}, func() XmuxConn { return &fakeConn{} })
++	var wg sync.WaitGroup
++	for i := 0; i < 8; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			_ = manager.GetXmuxClient(context.Background())
++		}()
++	}
++	wg.Add(1)
++	go func() {
++		defer wg.Done()
++		_ = manager.Close()
++	}()
++	wg.Wait()
++	if got := manager.GetXmuxClient(context.Background()); got != nil {
++		t.Fatal("expected nil after concurrent close")
++	}
++}
++
++var _ io.Closer = (*XmuxManager)(nil)
