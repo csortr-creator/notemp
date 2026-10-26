@@ -1,0 +1,79 @@
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -27,7 +27,7 @@
+ 	"golang.org/x/crypto/cryptobyte"
+ )
+ 
+-func ApplyECH(c *Config, config *tls.Config) error {
++func ApplyECH(ctx context.Context, c *Config, config *tls.Config) error {
+ 	var ECHConfig []byte
+ 	var err error
+ 
+@@ -69,7 +69,7 @@
+ 			if nameToQuery == "" {
+ 				return errors.New("Using DNS for ECH Config needs serverName or use Server format example.com+https://1.1.1.1/dns-query")
+ 			}
+-			ECHConfig, err = QueryRecord(nameToQuery, DNSServer, c.EchSocketSettings)
++			ECHConfig, err = QueryRecord(ctx, nameToQuery, DNSServer, c.EchSocketSettings)
+ 			if err != nil {
+ 				return errors.New("Failed to query ECH DNS record for domain: ", nameToQuery, " at server: ", DNSServer).Base(err)
+ 			}
+@@ -89,6 +89,26 @@
+ 	configRecord atomic.Pointer[echConfigRecord]
+ 	// updateLock is not for preventing concurrent read/write, but for preventing concurrent update
+ 	UpdateLock sync.Mutex
++	retired    atomic.Bool
++}
++
++func (c *ECHConfigCache) Close() error {
++	c.retired.Store(true)
++	c.configRecord.Store(&echConfigRecord{})
++	return nil
++}
++
++type dohHTTPClient struct {
++	client *http.Client
++}
++
++func (d *dohHTTPClient) Close() error {
++	if d.client != nil && d.client.Transport != nil {
++		if idle, ok := d.client.Transport.(interface{ CloseIdleConnections() }); ok {
++			idle.CloseIdleConnections()
++		}
++	}
++	return nil
+ }
+ 
+ type echConfigRecord struct {
+@@ -111,20 +131,26 @@
+ // Update updates the ECH config for given domain and server.
+ // this method is concurrent safe, only one update request will be sent, others get the cache.
+ // if isLockedUpdate is true, it will not try to acquire the lock.
+-func (c *ECHConfigCache) Update(domain string, server string, isLockedUpdate bool, sockopt *internet.SocketConfig) ([]byte, error) {
++func (c *ECHConfigCache) Update(ctx context.Context, domain string, server string, isLockedUpdate bool, sockopt *internet.SocketConfig) ([]byte, error) {
++	if c.retired.Load() {
++		return nil, errors.New("ECH config cache retired")
++	}
+ 	if !isLockedUpdate {
+ 		c.UpdateLock.Lock()
+ 		defer c.UpdateLock.Unlock()
+ 	}
++	if c.retired.Load() {
++		return nil, errors.New("ECH config cache retired")
++	}
+ 	// Double check cache after acquiring lock
+ 	configRecord := c.configRecord.Load()
+ 	if configRecord.expire.After(time.Now()) {
+-		errors.LogDebug(context.Background(), "Cache hit for domain after double check: ", domain)
++		errors.LogDebug(ctx, "Cache hit for domain after double check: ", domain)
+ 		return configRecord.config, nil
+ 	}
+ 	// Query ECH config from DNS server
+-	errors.LogDebug(context.Background(), "Trying to query ECH config for domain: ", domain, " with ECH server: ", server)
+-	echConfig, ttl, err := dnsQuery(server, domain, sockopt)
++	errors.LogDebug(ctx, "Trying to query ECH config for domain: ", domain, " with ECH server: ", server)
++	echConfig, ttl, err := dnsQuery(ctx, server, domain, sockopt)
+ 	if err != nil {
+ 		return nil, err
+ 	}
