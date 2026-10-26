@@ -37,8 +37,9 @@ def prepare():
     patches = [ROOT / "patches" / name for name in (
         "xray-hysteria-session-close.patch", "xray-instance-dialer-features.patch",
         "xray-owned-system-dns.patch", "xray-grpc-owned-resources.patch",
-        "xray-xmux-owned-mux.patch", "xray-xmux-owned-dialer.patch",
-        "xray-xmux-owned-client.patch", "xray-xmux-owned-tests.patch")]
+        "xray-xmux-owned-mux.patch", "xray-xmux-owned-dialer-a.patch",
+        "xray-xmux-owned-dialer-b.patch", "xray-xmux-owned-client.patch",
+        "xray-xmux-owned-tests.patch")]
     identity = {"module": MODULE, "version": VERSION, "sum": checksum,
                 "patches": [{"path": p.relative_to(ROOT).as_posix(),
                              "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in patches]}
