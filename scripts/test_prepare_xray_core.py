@@ -37,8 +37,7 @@ class PrepareXrayTest(unittest.TestCase):
             ("xray-xmux-owned-tests.patch", "client", "hysteria"),
             ("xray-hysteria-owned-client-a.patch", "hysteria", "hysteriaa"),
             ("xray-hysteria-owned-client-b.patch", "hysteriaa", "echa"),
-            ("xray-ech-owned-cache-a.patch", "echa", "echb0"),
-            ("xray-ech-owned-cache-b0.patch", "echb0", "echb1"),
+            ("xray-ech-owned-cache-a.patch", "echa", "echb1"),
             ("xray-ech-owned-cache-b1.patch", "echb1", "echb2"),
             ("xray-ech-owned-cache-b2.patch", "echb2", "echb3"),
             ("xray-ech-owned-cache-b3.patch", "echb3", "echc"),
@@ -62,7 +61,7 @@ class PrepareXrayTest(unittest.TestCase):
         self.assertEqual("package final\n", (tree / "fixture.go").read_text())
         self.assertEqual("package old\n", (self.cache / "fixture.go").read_text())
         identity = json.loads((tree / prepared.STAMP).read_text())["identity"]
-        self.assertEqual(17, len(identity["patches"]))
+        self.assertEqual(16, len(identity["patches"]))
         self.assertTrue(all(len(p["sha256"]) == 64 for p in identity["patches"]))
         prepared.prepare()
         self.download.assert_called_once()
