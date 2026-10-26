@@ -1,0 +1,85 @@
+diff --git a/transport/internet/tls/ech.go b/transport/internet/tls/ech.go
+--- a/transport/internet/tls/ech.go
++++ b/transport/internet/tls/ech.go
+@@ -136,19 +162,13 @@
+ 	return configRecord.config, nil
+ }
+ 
+-// QueryRecord returns the ECH config for given domain.
+-// If the record is not in cache or expired, it will query the DNS server and update the cache.
+-func QueryRecord(domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
+-	GlobalECHConfigCacheKey := ECHCacheKey(server, domain, sockopt)
+-	echConfigCache, ok := GlobalECHConfigCache.Load(GlobalECHConfigCacheKey)
+-	if !ok {
+-		echConfigCache = &ECHConfigCache{}
+-		echConfigCache.configRecord.Store(&echConfigRecord{})
+-		echConfigCache, _ = GlobalECHConfigCache.LoadOrStore(GlobalECHConfigCacheKey, echConfigCache)
++func lookupECHRecord(ctx context.Context, echConfigCache *ECHConfigCache, domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
++	if echConfigCache.retired.Load() {
++		return nil, errors.New("ECH config cache retired")
+ 	}
+ 	configRecord := echConfigCache.configRecord.Load()
+ 	if configRecord.expire.After(time.Now()) {
+-		errors.LogDebug(context.Background(), "Cache hit for domain: ", domain)
++		errors.LogDebug(ctx, "Cache hit for domain: ", domain)
+ 		return configRecord.config, nil
+ 	}
+ 
+@@ -156,22 +176,47 @@
+ 	// otherwise return old value immediately and update in a goroutine
+ 	// but if the cache is too old, wait for update
+ 	if configRecord.expire.IsZero() || configRecord.expire.Add(time.Hour*4).Before(time.Now()) {
+-		return echConfigCache.Update(domain, server, false, sockopt)
+-	} else {
+-		// If someone already acquired the lock, it means it is updating, do not start another update goroutine
+-		if echConfigCache.UpdateLock.TryLock() {
+-			go func() {
+-				defer echConfigCache.UpdateLock.Unlock()
+-				echConfigCache.Update(domain, server, true, sockopt)
+-			}()
++		return echConfigCache.Update(ctx, domain, server, false, sockopt)
++	}
++	// If someone already acquired the lock, it means it is updating, do not start another update goroutine
++	if echConfigCache.UpdateLock.TryLock() {
++		go func() {
++			defer echConfigCache.UpdateLock.Unlock()
++			_, _ = echConfigCache.Update(ctx, domain, server, true, sockopt)
++		}()
++	}
++	return configRecord.config, nil
++}
++
++// QueryRecord returns the ECH config for given domain.
++// If the record is not in cache or expired, it will query the DNS server and update the cache.
++// Owned system-dialer scopes use a per-instance cache entry that retires with the owner.
++func QueryRecord(ctx context.Context, domain string, server string, sockopt *internet.SocketConfig) ([]byte, error) {
++	cacheKey := ECHCacheKey(server, domain, sockopt)
++	resource, owned, err := internet.AcquireSystemDialerResource(ctx, "ech-config|"+cacheKey, func() (io.Closer, error) {
++		c := &ECHConfigCache{}
++		c.configRecord.Store(&echConfigRecord{})
++		return c, nil
++	})
++	if owned {
++		if err != nil {
++			return nil, err
+ 		}
+-		return configRecord.config, nil
++		return lookupECHRecord(ctx, resource.(*ECHConfigCache), domain, server, sockopt)
++	}
++
++	echConfigCache, ok := GlobalECHConfigCache.Load(cacheKey)
++	if !ok {
++		echConfigCache = &ECHConfigCache{}
++		echConfigCache.configRecord.Store(&echConfigRecord{})
++		echConfigCache, _ = GlobalECHConfigCache.LoadOrStore(cacheKey, echConfigCache)
+ 	}
++	return lookupECHRecord(ctx, echConfigCache, domain, server, sockopt)
+ }
+ 
+ // dnsQuery is the real func for sending type65 query for given domain to given DNS server.
+ // return ECH config, TTL and error
+-func dnsQuery(server string, domain string, sockopt *internet.SocketConfig) ([]byte, uint32, error) {
++func dnsQuery(ctx context.Context, server string, domain string, sockopt *internet.SocketConfig) ([]byte, uint32, error) {
+ 	m := new(dns.Msg)
+ 	var dnsResolve []byte
+ 	m.SetQuestion(dns.Fqdn(domain), dns.TypeHTTPS)
