@@ -179,6 +179,23 @@
                 android:value="taildrop" />
         </service>
 
+        <!-- Verification-only; implementation compiled with -PverifyCompositeJni=true. -->
+        <service
+            android:name=".bg.XrayVerificationService"
+            android:exported="false"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            tools:ignore="ForegroundServicePermission">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name=".bg.XrayVerificationPrepareActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <receiver
             android:name=".bg.BootReceiver"
             android:exported="true">

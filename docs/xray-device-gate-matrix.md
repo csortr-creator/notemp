@@ -20,6 +20,7 @@ Xray wire/composite job.
 | gRPC / Xmux / Hysteria / ECH ownership | ordered patches + unit tests |
 | Composite verification Kotlin compile | `XrayNetworkOwner`, `XrayNetworkProvider` |
 | Packaged JNI symbols (verification path) | CI AAR/APK identity checks |
+| Verification service harness | `XrayVerificationService` (composite only) |
 
 ## Required device scenarios
 
@@ -88,3 +89,59 @@ For each scenario note: device model, Android API, APK/AAR SHA, config class
 (no secrets), pass/fail, and log excerpts without credentials. Append a dated
 subsection to this file or to `docs/xray-android-network-adapter.md` after a
 successful device run.
+
+## Device runbook — Realme GT 6 (verification APK)
+
+Build on a machine with the composite candidate AAR path (see CI isolated composite
+and `-PverifyCompositeJni=true`). Package id: `io.nekonasekai.sfaxtnd`.
+
+1. Install the verification APK (arm64-v8a).
+2. ColorOS: disable battery optimization for the app; grant notification permission.
+3. Grant VPN once:
+   ```bash
+   adb shell am start -n io.nekonasekai.sfaxtnd/io.nekohasekai.sfa.bg.XrayVerificationPrepareActivity
+   ```
+   Accept the system VPN dialog.
+4. Push a policy-valid fixture (loopback SOCKS + password ≥32 chars, freedom or
+   reviewed outbound only). Example shape (replace pass/port; no secrets in git):
+   ```json
+   {
+     "log": {"loglevel": "warning"},
+     "inbounds": [{
+       "listen": "127.0.0.1", "port": 11080, "protocol": "socks",
+       "settings": {
+         "auth": "password", "udp": true,
+         "accounts": [{"user": "fixture", "pass": "xray_fixture_password_0123456789abcdef"}]
+       }
+     }],
+     "outbounds": [{"protocol": "freedom"}]
+   }
+   ```
+   Prefer app-specific storage (no storage permission):
+   ```bash
+   adb push fixture.json /sdcard/Android/data/io.nekonasekai.sfaxtnd/files/xray-fixture.json
+   ```
+5. Start verification owner:
+   ```bash
+   adb shell am start-foreground-service \
+     -n io.nekonasekai.sfaxtnd/io.nekohasekai.sfa.bg.XrayVerificationService \
+     -a io.nekohasekai.sfa.action.XRAY_VERIFICATION_START \
+     --es config_path xray-fixture.json
+   ```
+   (`config_path` is resolved against the app files dir and external files dir.)
+6. Logs:
+   ```bash
+   adb logcat -s XrayVerification:I
+   ```
+   Expect `phase=WAITING_FOR_NETWORK` then `phase=RUNNING` on Wi‑Fi.
+7. D1 smoke: SOCKS client to `127.0.0.1:11080` with fixture user/pass; traffic must
+   leave on underlying Wi‑Fi (protect/bind). No `XRAY_SOCKET_PROTECTION_DENIED`.
+8. Stop:
+   ```bash
+   adb shell am start-foreground-service \
+     -n io.nekonasekai.sfaxtnd/io.nekohasekai.sfa.bg.XrayVerificationService \
+     -a io.nekohasekai.sfa.action.XRAY_VERIFICATION_STOP
+   ```
+
+Production Connect button remains sing-box. Do not record a pass for D1 until
+`phase=RUNNING` and a real TCP exchange succeed without protection errors.
