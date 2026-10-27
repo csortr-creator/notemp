@@ -1,1 +1,32 @@
-RESTORED_FROM_FILE
+name: Build SFAxtnd
+
+on:
+  push:
+    branches: [dev, master, main]
+  workflow_dispatch:
+    inputs:
+      isolated_aar_only:
+        description: 'Build composite arm64 AAR + verification APK (restored workflow required)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Workflow body is being restored
+        run: |
+          set -euo pipefail
+          if [ -f scripts/ci-workflow-parts/part_0.yml.txt ]; then
+            cat scripts/ci-workflow-parts/part_*.yml.txt > /tmp/build.yml.restored
+            wc -c /tmp/build.yml.restored
+            head -5 /tmp/build.yml.restored
+            echo "Full workflow is staged under scripts/ci-workflow-parts; a follow-up commit will reassemble build.yml."
+          fi
+          echo "::error::build.yml was truncated; waiting for reassembly commit"
+          exit 1
