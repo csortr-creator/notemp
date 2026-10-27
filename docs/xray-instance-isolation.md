@@ -193,12 +193,20 @@ Ordered patches after gRPC complete the reviewed transport-cache ownership path:
   instance; DOH/UDP dnsQuery DialSystem uses ContextWithSystemDialerOwner; owned
   Hysteria/XHTTP call sites pass GetTLSConfigContext(ownerCtx).
 
-Source preparer now applies **16** ordered Xray patches. prepare unit tests assert
-the full chain. Local ownership regressions passed -race for Xmux, Hysteria and
-ECH cache Close. CI on `8b7e40fd7b77a7009eba15e9d2a2cec9a6cd7828` (run 40285417961)
+Source preparer applies **17** ordered Xray patches after the DOH residual patch
+below. Local ownership regressions passed -race for Xmux, Hysteria and ECH cache
+Close. CI on `8b7e40fd7b77a7009eba15e9d2a2cec9a6cd7828` (run 40285417961)
 completed success for build and isolated Xray wire/composite proof.
 
-**Still open (not claimed fixed by these patches):** process-global
-`clientForECHDOH` idle HTTP clients for unscoped ECH DOH, Android device
-JNI/protect/bind/handover, SOCKS UDP/mask chains, performance, and production
-activation. Host wire fixtures are not device protection evidence.
+**Still open:** Android device JNI/protect/bind/handover, SOCKS UDP/mask chains,
+performance, and production activation. Host wire fixtures are not device
+protection evidence. See `docs/xray-device-gate-matrix.md`.
+
+
+### Residual ECH DOH HTTP client (2026-10-26)
+
+`xray-ech-owned-doh-client-a.patch` moves scoped DOH `http.Client` instances into
+AcquireSystemDialerResource (`ech-doh|…`) with `dohHTTPClient.Close` calling
+CloseIdleConnections. Unscoped callers keep `clientForECHDOH`. Prepare chain is
+**17** ordered patches. CI on `ce6c8f2c0dad` succeeded for build and isolated
+Xray wire/composite proof. Device gates remain open.
