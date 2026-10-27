@@ -90,6 +90,17 @@ For each scenario note: device model, Android API, APK/AAR SHA, config class
 subsection to this file or to `docs/xray-android-network-adapter.md` after a
 successful device run.
 
+## Build verification APK (CI)
+
+On GitHub → Actions → **Build SFAxtnd** → Run workflow:
+
+- branch: `dev`
+- **Build composite arm64 AAR + verification APK** (`isolated_aar_only`): **true**
+
+Artifact: `composite-verification-<sha>` contains
+`SFAxtnd-verification-arm64-debug.apk` (+ sha256). Install that APK on the device.
+Do not use the ordinary release APK for D1–D4.
+
 ## Device runbook — Realme GT 6 (verification APK)
 
 Build on a machine with the composite candidate AAR path (see CI isolated composite
