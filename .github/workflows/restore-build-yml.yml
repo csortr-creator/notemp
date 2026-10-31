@@ -1,0 +1,93 @@
+name: Restore build.yml from history
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: dev
+
+      - name: Restore full Build SFAxtnd workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Last known good body before tool truncation
+          git show 7959f4ecd7172c7c0395f871e0f81c8f66c11777:.github/workflows/build.yml > .github/workflows/build.yml
+          test "$(wc -c < .github/workflows/build.yml)" -gt 20000
+          head -3 .github/workflows/build.yml | grep -F 'name: Build SFAxtnd'
+
+          python3 << 'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/build.yml')
+          t = p.read_text()
+          t = t.replace(
+              "description: 'Build only the experimental composite arm64 AAR'",
+              "description: 'Build composite arm64 AAR + verification APK (-PverifyCompositeJni) for device gates'",
+              1,
+          )
+          old = """      - name: Compile and package the application against the candidate AAR
+        run: |
+          mkdir -p app/libs
+          cp dist/composite-arm64.aar app/libs/libbox.aar
+          chmod +x gradlew
+          ./gradlew assembleOtherDebug -PverifyCompositeJni=true -Dorg.gradle.jvmargs=\"-Xmx4096m -XX:+UseG1GC\" --stacktrace
+      - name: Verify packaged JNI is the candidate, without duplicate libraries
+        run: python3 scripts/verify_composite_apk.py dist/composite-arm64.aar app/build/outputs/apk/other/debug
+"""
+          new = """      - name: Compile and package the application against the candidate AAR
+        run: |
+          mkdir -p app/libs dist
+          cp dist/composite-arm64.aar app/libs/libbox.aar
+          chmod +x gradlew
+          ./gradlew assembleOtherDebug -PverifyCompositeJni=true -Dorg.gradle.jvmargs=\"-Xmx4096m -XX:+UseG1GC\" --stacktrace
+          # Stable name for device-gate install (Realme GT 6 / arm64)
+          apk=\"$(find app/build/outputs/apk/other/debug -name '*.apk' -type f | head -n 1)\"
+          test -n \"$apk\"
+          cp \"$apk\" \"dist/SFAxtnd-verification-arm64-debug.apk\"
+          sha256sum \"dist/SFAxtnd-verification-arm64-debug.apk\" | tee dist/SFAxtnd-verification-arm64-debug.apk.sha256
+      - name: Verify packaged JNI is the candidate, without duplicate libraries
+        run: python3 scripts/verify_composite_apk.py dist/composite-arm64.aar app/build/outputs/apk/other/debug
+"""
+          if old not in t:
+              raise SystemExit('compile block not found for patch')
+          t = t.replace(old, new, 1)
+          t = t.replace(
+              'name: composite-arm64-aar-${{ github.sha }}',
+              'name: composite-verification-${{ github.sha }}',
+              1,
+          )
+          if 'dist/SFAxtnd-verification-arm64-debug.apk' not in t:
+              # insert apk paths into artifact list after name line block
+              needle = 'path: |\n            dist/composite-arm64.aar\n'
+              insert = 'path: |\n            dist/SFAxtnd-verification-arm64-debug.apk\n            dist/SFAxtnd-verification-arm64-debug.apk.sha256\n            dist/composite-arm64.aar\n'
+              if needle not in t:
+                  raise SystemExit('artifact path block not found')
+              t = t.replace(needle, insert, 1)
+          t = t.replace('retention-days: 7\n', 'retention-days: 14\n')
+          # only last artifact retention if multiple 7s — keep simple: verification block already 14 via replace all careful
+          p.write_text(t)
+          assert 'SFAxtnd-verification-arm64-debug.apk' in t
+          print('patched', len(t))
+          PY
+
+      - name: Commit restored workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name 'notemp'
+          git config user.email 'csortr@gmail.com'
+          git add .github/workflows/build.yml
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git commit -m 'ci: restore full Build SFAxtnd workflow from 7959f4e (+ verification APK artifact)'
+          git push origin HEAD:dev
