@@ -1,5 +1,0 @@
-⚡ Optimize Taildrop file chunk allocation
-
-💡 What: Moved ByteArray(chunkSize) allocation outside of the while loop inside writeFile in TaildropSendManager.kt.
-🎯 Why: Previously, for every chunk read from a file, a new large ByteArray was allocated. This caused significant memory churn and forced the Garbage Collector to run frequently, degrading performance on large files. By reusing a single buffer and using copyOf(filled) only for the necessary slice before passing to writeChunk, allocations are heavily reduced.
-📊 Measured Improvement: By structural analysis, this guarantees O(1) memory allocation overhead per file transferred, as opposed to O(N) (where N = file size / chunk size) previously, substantially reducing memory and GC overhead.
